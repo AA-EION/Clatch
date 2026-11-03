@@ -129,6 +129,49 @@ jobs:
           kill "$pid"
 
   # ----------------------------------------------------------------------------
+  # Windows: unit tests, x64 + ARM64 apps (NativeAOT), one installer.
+  # ----------------------------------------------------------------------------
+  windows:
+    name: Windows · build, test, installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Inno Setup
+        run: choco install innosetup -y --no-progress
+      - name: Build
+        shell: pwsh
+        run: ./windows/scripts/build.ps1
+      - name: Launch smoke test (x64)
+        shell: pwsh
+        run: |
+          $p = Start-Process windows/out/win-x64/Clatch.exe -PassThru
+          Start-Sleep 8
+          if ($p.HasExited) { throw "Clatch exited early (code $($p.ExitCode))" }
+          $p.Refresh()
+          "resident memory: {0:N1} MB" -f ($p.WorkingSet64 / 1MB)
+          Stop-Process $p
+      - name: Install with the installer, launch
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem windows/out/Clatch-*-windows-setup.exe | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=' -Wait
+          $exe = "$env:LOCALAPPDATA\Programs\Clatch\Clatch.exe"
+          if (-not (Test-Path $exe)) { throw "not installed at $exe" }
+          $p = Start-Process $exe -PassThru
+          Start-Sleep 8
+          if ($p.HasExited) { throw "installed Clatch exited early (code $($p.ExitCode))" }
+          Stop-Process $p
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Clatch-windows
+          path: windows/out/Clatch-*-windows-setup.exe
+          if-no-files-found: error
+
+  # ----------------------------------------------------------------------------
   # What people see when they open the DMG (diagnostic, never fails the build).
   # ----------------------------------------------------------------------------
   dmg-look:

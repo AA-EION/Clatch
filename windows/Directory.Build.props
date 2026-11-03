@@ -1,0 +1,17 @@
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Project>
+  <PropertyGroup>
+    <!-- One version for macOS and Windows: the repository's VERSION file. -->
+    <ClatchVersion>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../VERSION').Trim())</ClatchVersion>
+    <Version>$(ClatchVersion)</Version>
+    <AssemblyVersion>$(ClatchVersion).0</AssemblyVersion>
+    <FileVersion>$(ClatchVersion).0</FileVersion>
+    <Company>Issen Software Group</Company>
+    <Product>Clatch</Product>
+    <Copyright>© 2026 Issen Software Group. GNU GPL v3 or later.</Copyright>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>
