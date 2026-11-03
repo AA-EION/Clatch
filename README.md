@@ -35,12 +35,24 @@ its own sign-in and its own local data.
   Lives in the **menu bar** only, no Dock icon.
 - **Windows**: x64 and ARM64, **Windows 10 (1809) and 11**. A WinUI 3 app with **Acrylic**.
   Lives in the **notification area** only, no taskbar button.
-- **Global shortcut**: **⌃⌥⌘C** on macOS, **Ctrl+Alt+Win+C** on Windows, switches to the next
-  account from anywhere. You can change it.
+- **Two ways to run your accounts.** *One at a time* (the default): one Claude, and Clatch swaps
+  the account. *Side by side*: each account gets its own Claude window, and several can be open
+  at once. Every account keeps its sign-in in both modes.
+- **A profile switcher like ⌘Tab / Alt+Tab**: hold **⌃⌥⌘** and tap **C** on macOS
+  (**Ctrl+Alt+Win** and **C** on Windows) to move through your profiles, let go to open the
+  highlighted one. You can change the shortcut.
+- **A shortcut for every profile**: launchers in `~/Applications/Clatch Profiles` on macOS, Desktop
+  and Start menu shortcuts on Windows, each with Claude's icon and the profile's own badge. Once turned on,
+  they're created, renamed and removed together with the profiles.
+- **Per-profile options**: badge letter or emoji, colour, environment variables and extra launch
+  flags for that profile's Claude.
 - **Closes Claude the polite way.** If a local session is running, Claude asks you before quitting,
   and Clatch waits for your answer.
-- **Very light.** While its panel is closed, Clatch draws nothing and runs nothing. It's just an
-  icon and a shortcut.
+- **Very light.** While its panel and switcher are closed, Clatch draws nothing and polls nothing.
+  It's an icon, a shortcut, and the system's own notifications when a Claude starts or quits.
+- **Extras**: copy Code-tab chats to another profile, sign-in backups whenever the mode changes,
+  an optional daily check for new Clatch versions, and (side by side) sign-ins routed to the right
+  profile and profiles reopened after Claude updates itself.
 - **Fail-safe.** Before moving anything, Clatch checks that Claude's data folder still looks the way
   it expects. If Claude has changed how it stores its data, Clatch stops, tells you what's
   different and asks whether to continue anyway.
@@ -109,16 +121,98 @@ That's it. Both accounts now show up in the Clatch menu.
 
 ### Switching
 
-- **Click** an account in the Clatch menu, or
-- press **⌃⌥⌘C** (macOS) or **Ctrl+Alt+Win+C** (Windows) anywhere to switch to the next account
-  (it goes round the list).
+- **Click** an account in the Clatch menu, press **⌘1…⌘9** (macOS) or **Ctrl+1…Ctrl+9** (Windows)
+  while the menu is open, or
+- use the **profile switcher** (below), or
+- open a profile's **shortcut** (below).
 
-Clatch asks Claude to quit, waits until Claude and all its background processes have closed, swaps
+In *one at a time* mode, Clatch asks Claude to quit, waits until Claude and all its background processes have closed, swaps
 the accounts and opens Claude again. Usually that takes a couple of seconds.
 
 On Windows, Claude is asked to close the same way Windows asks apps to close when it shuts down,
 so Claude can still ask you first. If it doesn't close, quit it from its own notification area
 icon; Clatch carries on by itself.
+
+### The profile switcher
+
+Press **⌃⌥⌘C** (macOS) or **Ctrl+Alt+Win+C** (Windows) and keep holding the modifier keys. A
+floating panel (Liquid Glass on macOS 26+, Acrylic on Windows) shows your profiles with the next
+one highlighted.
+
+- Tap **C** again to move forward; **Shift+C** or **←** moves back, **→** forward.
+- **Let go** of the modifier keys to open the highlighted profile. **Return/Enter** opens it at once,
+  **Esc** cancels, and a click works too.
+
+What "open" means depends on the mode: *one at a time* switches Claude to that account; *side by
+side* brings that profile's Claude to the front, or starts it. While the switcher is open Clatch
+reads the state of the modifier keys; nothing is watched once it closes. No accessibility or input
+monitoring permission is needed.
+
+### One at a time or side by side
+
+Choose in **Settings › Profiles**.
+
+| | One at a time (default) | Side by side |
+|---|---|---|
+| Claude windows | One | One per open profile |
+| Accounts signed in and active at once | One | As many as are open |
+| Switching | Claude closes, the account is swapped, Claude reopens | Instant: the profile's own Claude comes to the front |
+| Profile shortcuts | Switch Claude to that profile | Open that profile's Claude, or bring it to the front |
+
+**One at a time is the more conservative choice**: it's just like signing out and in, so only one
+account is ever active from your computer. With side by side several of your accounts are signed in
+and active at the same time from the same computer. Clatch asks you to confirm before turning it on;
+please review [Anthropic's terms](https://www.anthropic.com/legal/consumer-terms) for how your
+accounts may be used. Clatch doesn't change what any account is allowed to do.
+
+Each profile keeps the **same folder in both modes**, so changing modes never signs anyone out.
+Clatch backs up every profile's sign-in whenever the mode changes (the newest three are kept;
+**Settings › Restore Sign-ins**). Turning side by side off politely closes every Claude except the
+active profile's first; each Claude may ask you before closing, as usual.
+
+Side-by-side options:
+
+- **Send sign-ins to the profile that asked.** Signing in ends in the browser, which hands a
+  `claude://` link back to Claude. With several Claudes open it could reach the wrong one, so Clatch
+  becomes the handler for `claude://` links and passes each to the right profile: a profile that is
+  waiting to sign in, otherwise the one you used last. Turning it off gives the links back to
+  Claude. On macOS, the first delivery asks once for permission for Clatch to control Claude
+  (*System Settings › Privacy & Security › Automation*). On Windows, if you once picked a default
+  app for `claude` links yourself, choose Clatch in *Settings › Apps › Default apps* (Clatch shows a
+  button for it).
+- **Reopen profiles after Claude updates.** When Claude updates itself it closes; Clatch reopens the
+  profiles that were open, on the new version.
+- **Own taskbar button for each profile** (Windows): each profile's Claude gets its own taskbar
+  group with its badged icon. macOS has no per-window Dock icons; keep the profile launchers in the
+  Dock instead.
+
+### Profile shortcuts
+
+**Settings › Profile launchers in Applications** (macOS) / **Profile shortcuts on the Desktop & Start
+menu** (Windows), off until you turn it on. Each profile gets a shortcut with Claude's icon and the profile's
+badge (its initial, or a letter or emoji you choose). Opening it opens Claude as that profile, and
+starts Clatch first if needed. Shortcuts follow your profiles: renaming a profile renames its
+shortcut, removing it removes it, and turning the setting off removes them all.
+
+On macOS the launchers are tiny apps in `~/Applications/Clatch Profiles`; drag them to the Dock or
+open them from Spotlight. On Windows the shortcuts are on the Desktop and in the Start menu
+(*Clatch Profiles* folder), and can be pinned to the taskbar.
+
+### Editing a profile
+
+**⋯ › Edit…** next to a profile:
+
+- **Name**, **badge** (a letter or emoji; empty uses the name's first letter) and **colour**.
+- **Environment variables** (`NAME=value`, one per line) and **extra flags** for that profile's
+  Claude, applied whenever Clatch starts it. `--user-data-dir` is reserved: Clatch sets it.
+
+The same menu has **Open/Bring to Front**, **Close Claude** and **Restart Claude** (side by side),
+**Move Up/Down** and **Remove…**.
+
+### Moving Code-tab chats
+
+**Move Code Chats…** copies a chat from Claude's **Code** tab to another profile so you can carry on
+there. Chats on claude.ai are stored by Anthropic per account and can't be moved.
 
 ### If Claude's data looks different
 
@@ -134,17 +228,20 @@ Continuing is not dangerous: Clatch only ever renames folders and never deletes 
 Claude starts signed out, or the switch has no effect. If you see this warning, please
 [open an issue](https://github.com/AA-EION/Clatch/issues) so Clatch can be updated.
 
-The **⋯** button next to each account lets you rename it, reorder it or remove it.
-
 ### Settings
 
 | Setting | What it does |
 |---|---|
-| **Switch to next account** | The global shortcut. Click **Change** and type a new one, **Default** for ⌃⌥⌘C, or **✕** to turn it off. |
-| **Reopen Claude after switching** | On by default. Off: Claude stays closed after a switch until you open it. |
+| **Profiles** | *One at a time* or *side by side* (see above), plus the side-by-side options. |
+| **Profile switcher** | The global shortcut. Click **Change** and type a new one, **Default** for ⌃⌥⌘C / Ctrl+Alt+Win+C, or **✕** / **Off** to turn it off. |
+| **Profile launchers / shortcuts** | Off by default. One shortcut per profile, kept in step with your profiles; turning it off removes them. |
+| **Reopen Claude after switching** | One at a time only. On by default. Off: Claude stays closed after a switch until you open it. |
 | **Same MCP & tool settings for every account** | On by default. Your `claude_desktop_config.json` (MCP servers and other tools) follows you to every account. |
+| **Check for updates daily** | On by default. Asks GitHub for newer Clatch releases at most once a day and shows a banner; it never downloads anything by itself. |
 | **Open Clatch at login** | Start Clatch when you log in. macOS 13 and later (on older versions add it in *System Preferences › Users & Groups › Login Items*); always available on Windows. |
+| **Restore Sign-ins…** | Puts a profile's sign-in back from one of the backups made when the mode changed. |
 | **Show Accounts Folder** | Opens the folder where Clatch keeps the accounts that aren't active. |
+| **Open Log** | Clatch's log (`~/Library/Logs/Clatch/clatch.log`, `%LOCALAPPDATA%\Clatch\clatch.log`). It never contains sign-in links or credentials. |
 
 ### Why ⌃⌥⌘C and Ctrl+Alt+Win+C?
 
@@ -179,8 +276,9 @@ you and you can pick another one.
 Not at the moment. It keeps one sign-in, which is why Clatch exists.
 
 **Can I use two accounts at the same time?**
-No. Clatch switches the one Claude app between accounts. That keeps Claude itself untouched, so
-updates and local sessions keep working as usual.
+Yes, with **side by side** mode (Settings › Profiles): each profile runs its own Claude window.
+The default, *one at a time*, keeps a single Claude and a single active account, which is the more
+conservative choice. See [One at a time or side by side](#one-at-a-time-or-side-by-side).
 
 **Is my data safe?**
 Clatch never opens your sign-in data. It renames folders on your own disk, and it only does so
@@ -192,8 +290,10 @@ No. Clatch only switches the **Claude Desktop** app. The `claude` command-line t
 sign-in.
 
 **Does it need special permissions?**
-No. No accessibility access, no input monitoring, no administrator password. The shortcut uses the
-system's standard hot key service, which only tells Clatch when *its* shortcut is pressed.
+No accessibility access, no input monitoring, no administrator password. The shortcut uses the
+system's standard hot key service, which only tells Clatch when *its* shortcut is pressed. The one
+exception is optional: routing sign-ins side by side on macOS asks once for permission to send
+Claude the sign-in link (Automation).
 
 ---
 
@@ -210,9 +310,14 @@ On macOS:
         └── <account id>/Claude/   ← each other account, waiting its turn
 ```
 
-On Windows the same layout lives in `%APPDATA%\Claude` (classic installer) or
-`%LOCALAPPDATA%\Packages\Claude_…\LocalCache\Roaming\Claude` (Microsoft Store/MSIX install), with
-Clatch's folder in `%LOCALAPPDATA%\Clatch`.
+On Windows Claude's folder is `%APPDATA%\Claude` (classic installer) or
+`%LOCALAPPDATA%\Claude-Data\claude_…` (current Microsoft Store/MSIX versions); the other profiles'
+folders are `%LOCALAPPDATA%\Clatch-<id>`, next to it, and Clatch's own files are in
+`%LOCALAPPDATA%\Clatch`.
+
+*Side by side* uses the very same folders: the active profile's Claude runs on Claude's own folder,
+and every other profile's Claude is started with `--user-data-dir=<its folder>`. Claude (an Electron
+app) allows one instance per data folder, so each profile gets its own window and its own sign-in.
 
 Claude Desktop keeps everything that makes up a sign-in (cookies, local storage, encrypted
 tokens) in `~/Library/Application Support/Claude`. Switching moves that folder aside and moves

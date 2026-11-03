@@ -83,7 +83,11 @@ the new account starts with the same tools.
   closes. While closed, nothing is rendered or observed.
 - The global shortcut uses Carbon's `RegisterEventHotKey`: the system delivers one event when it
   is pressed. There is no event tap, so no permission prompt and no CPU use.
-- No timers, no network, no file watching at rest.
+- No timers and no file watching at rest. Running Claudes are followed with the system's own
+  notifications (`NSWorkspace` launch/terminate/activate on macOS, process exit handles and
+  `SetWinEventHook` window events on Windows), not by polling.
+- The only network request is the optional update check: GitHub's releases API, at most once a
+  day, when Clatch starts or its panel opens.
 
 ## Liquid Glass
 
@@ -117,15 +121,95 @@ The Windows app (`windows/`) follows the same design:
 
 | macOS | Windows |
 |---|---|
-| `~/Library/Application Support/Claude` | `%APPDATA%\Claude` (classic installer) or `%LOCALAPPDATA%\Packages\<Claude package>\LocalCache\Roaming\Claude` (MSIX; Windows redirects the packaged app's AppData there) |
+| `~/Library/Application Support/Claude` | `%APPDATA%\Claude` (classic installer) or, for current Microsoft Store/MSIX versions, `%LOCALAPPDATA%\Claude-Data\<package family>` passed to Claude with `--user-data-dir` (older MSIX versions used `%LOCALAPPDATA%\Packages\<Claude package>\LocalCache\Roaming\Claude`). Clatch reads the folder from the running Claude's own command line when it can |
 | Encryption key in the Keychain ("Claude Safe Storage") | Key in `Local State` inside the data folder, protected with DPAPI for the Windows user, so each saved account is self-contained |
 | Quit Apple Event (`NSRunningApplication.terminate`) | Restart Manager (`RmShutdown` without force): Claude gets the messages it gets when Windows shuts down and may refuse. If it doesn't close, the user quits it from its notification area icon and Clatch carries on |
 | `proc_listallpids` / `proc_pidpath` | Toolhelp snapshot + `QueryFullProcessImageName`; Claude's main process is the `claude.exe` whose parent isn't `claude.exe` |
 | `rename(2)` works with open files | Directory moves **fail** while any file is open, so Clatch always waits for every process; a failed move changes nothing |
-| `NSStatusItem` + `NSPopover` | `Shell_NotifyIcon` on a message-only window + a borderless WinUI 3 window with Acrylic, closed when it loses focus, hidden from the taskbar and Alt+Tab |
+| `NSStatusItem` + `NSPopover` | `Shell_NotifyIcon` on a hidden top-level window + a borderless WinUI 3 window with Acrylic, closed when it loses focus, hidden from the taskbar and Alt+Tab |
 | Carbon `RegisterEventHotKey` | `RegisterHotKey` (same window, no permissions) |
 | `SMAppService` login item | Per-user `Run` registry value |
 
 Clatch for Windows is **unpackaged** on purpose: an MSIX-packaged Clatch would have its own AppData
 writes redirected too, and could not move Claude's real data folder. It's self-contained and
 compiled with NativeAOT, so it needs no .NET or Windows App SDK runtime on the PC.
+
+## Side by side
+
+Claude Desktop is an Electron app, and Electron's single-instance lock belongs to the data folder:
+a Claude started with a different `--user-data-dir` is a separate instance with its own sign-in.
+Side by side builds on that and on the folders Clatch already has:
+
+- The active profile's Claude runs on Claude's own folder; every other profile's Claude is started
+  with `--user-data-dir=<that profile's folder>`. One at a time uses exactly the same folders, so
+  changing modes never moves data or signs anyone out. Every mode change first copies each closed
+  profile's sign-in files (cookies, local storage, `Local State`, preferences) into
+  `Backups/<date>` in Clatch's folder; the newest three are kept.
+- macOS starts each instance with `NSWorkspace.openApplication` and
+  `createsNewApplicationInstance`; Windows starts Claude's executable (or the Store app's alias)
+  with the flag. The profile's environment variables and extra flags are added at that point.
+- Clatch tells which Claude belongs to which profile from each process's own arguments
+  (`KERN_PROCARGS2` on macOS; `NtQueryInformationProcess` command line on Windows) and keeps that
+  map current from launch/exit notifications. A Claude without `--user-data-dir` is the active
+  profile's.
+- Closing a profile asks only that Claude to quit (an Apple Event to that one process; Restart
+  Manager for just its processes on Windows), so it may still ask you first. Turning side by side
+  off does this for every profile except the active one, then switches the mode.
+
+**Sign-in routing.** Signing in ends with the browser opening a `claude://` link. With routing on,
+Clatch is the handler for that scheme (macOS: Clatch declares it and is made the default handler,
+and Claude is made the default again when routing is turned off; Windows: the per-user
+`HKCU\Software\Classes\claude` command, with Claude's own command kept and restored, and a
+`RegNotifyChangeKeyValue` watch in case Claude registers itself again). A link goes to the profile
+that is waiting to sign in (a profile added in the last 15 minutes), otherwise to the Claude used
+most recently. It is delivered to that profile's Claude: on macOS as a "get URL" Apple Event sent to
+that process (which needs the Automation permission once), on Windows by starting Claude with the
+profile's `--user-data-dir` and the link, which Electron hands to the running instance. Link
+contents are never logged.
+
+**Watchdog.** When a profile's Claude ends without Clatch asking, Clatch notes Claude's installed
+version and checks it every 3 seconds for up to 3 minutes. If the version changes (Claude updated
+itself), the profile is reopened in the background.
+
+**Taskbar identity (Windows).** Each profile's Claude window gets its own AppUserModelID, relaunch
+command and badged icon (`SHGetPropertyStoreForWindow`), so Windows groups it separately and
+"pin to taskbar" pins that profile. macOS draws one Dock icon per application bundle, which Clatch
+can't change for Claude; the profile launchers serve that purpose in the Dock.
+
+## The profile switcher
+
+A non-activating panel (`NSPanel` with SwiftUI; `glassEffect` on macOS 26+, the HUD material
+before) or a borderless, topmost WinUI window with an always-active Acrylic backdrop on Windows. It
+never takes keyboard focus, so the keys stay with the shortcut. While it is open, and only then:
+
+- the modifier keys' state is read about 60 times a second (`NSEvent.modifierFlags`,
+  `GetAsyncKeyState`), and releasing them opens the highlighted profile;
+- a few extra hot keys are registered (Shift+shortcut, ←, →, Esc, Return/Enter) the same way as
+  the main shortcut, and removed again when it closes.
+
+No event tap or keyboard hook is involved, so no permission is needed.
+
+## Profile icons and shortcuts
+
+The icon is the installed Claude's own icon (`NSWorkspace.icon(forFile:)`; `SHDefExtractIcon` on
+Windows) with a round badge in the profile's colour drawn on its corner, rendered to PNG/ICNS/ICO
+and cached by look.
+
+- **macOS**: each launcher is a small app bundle in `~/Applications/Clatch Profiles` whose only job
+  is `open -g clatch://launch/<profile id>`. Clatch handles its own `clatch://` scheme, so opening
+  a launcher starts Clatch if needed and opens the profile. The bundles are ad-hoc signed and
+  registered with Launch Services.
+- **Windows**: `.lnk` files on the Desktop and in *Start menu › Programs › Clatch Profiles*,
+  pointing at `Clatch.exe --launch <profile id>` with the profile's AppUserModelID. A second
+  `Clatch.exe` hands its arguments to the running one (`WM_COPYDATA`) and exits.
+
+Clatch keeps a record of the shortcuts it made, and only ever renames or removes those.
+
+## Code-tab chats
+
+Claude's **Code** tab keeps one small file per local chat in the data folder
+(`claude-code-sessions/<account id>/<organisation id>/local_<id>.json`); the conversation itself
+lives in Claude Code's own history, which every profile on the computer shares. **Move Code Chats**
+copies that file into the other profile, under the account and organisation that profile used most
+recently, so the chat shows up there and can carry on. The target profile must have opened the
+Code tab once. Chats on claude.ai live on Anthropic's servers and are not touched.
