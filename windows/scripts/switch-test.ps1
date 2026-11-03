@@ -69,7 +69,15 @@ function Stashed($name) {
 try {
     Write-Account 'alice'
     $claude = if ($CustomDataDir) { Start-Process $fake -ArgumentList "--user-data-dir=`"$data`"" -PassThru } else { Start-Process $fake -PassThru }
-    Start-Sleep 3
+    # Like the real Claude, the stand-in only answers "please close" once its
+    # window exists; on a freshly booted runner that can take a while.
+    $deadline = (Get-Date).AddSeconds(60)
+    while ($claude.MainWindowHandle -eq [IntPtr]::Zero -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 300
+        $claude.Refresh()
+    }
+    if ($claude.MainWindowHandle -eq [IntPtr]::Zero) { throw 'the stand-in Claude never opened its window' }
+    Start-Sleep 1
 
     # 1. Add a second account: Claude must close, alice must be parked, Claude reopened.
     Start-Process $Exe -ArgumentList '--add-account', 'Bob' | Out-Null
@@ -80,6 +88,11 @@ try {
     if (Test-Path (Join-Path $data 'Cookies')) { throw 'Claude''s data folder should be empty for the new account' }
     $reopened = Get-Process claude -ErrorAction SilentlyContinue
     if (-not $reopened) { throw 'Claude was not reopened after adding the account' }
+    # Wait for the reopened stand-in's window too, before the next switch.
+    $deadline = (Get-Date).AddSeconds(60)
+    while (-not (Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero }) -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 300
+    }
     'step 1 ok: Claude closed, alice parked, Claude reopened'
 
     # 2. "Sign in" as Bob, then switch back: alice live again, Bob parked.
