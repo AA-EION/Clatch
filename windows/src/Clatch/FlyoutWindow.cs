@@ -38,6 +38,7 @@ internal sealed class FlyoutWindow : Window
     private bool recording;
     private string? recorderMessage;
     private bool closed;
+    private bool hasBeenActive;
 
     public FlyoutWindow(AppModel model, Native.POINT? anchor)
     {
@@ -67,7 +68,15 @@ internal sealed class FlyoutWindow : Window
         model.Changed += Render;
         Activated += (_, e) =>
         {
-            if (e.WindowActivationState == WindowActivationState.Deactivated && !recording) Close();
+            if (e.WindowActivationState != WindowActivationState.Deactivated)
+            {
+                hasBeenActive = true;
+                return;
+            }
+            // Close when the user clicks elsewhere, but only once the panel has
+            // really had focus: if Windows did not give it the foreground when
+            // it opened, it stays visible (topmost) until the user clicks it.
+            if (hasBeenActive && !recording) Close();
         };
         Closed += (_, _) =>
         {

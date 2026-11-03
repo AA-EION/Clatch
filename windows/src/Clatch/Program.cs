@@ -24,7 +24,7 @@ public static class Program
         Native.CreateMutexW(0, false, @"Local\Clatch-6E1B3C2A-9F4D-4A51-8C0B-3D2E7A9F1C55");
         if (Marshal.GetLastPInvokeError() == Native.ERROR_ALREADY_EXISTS)
         {
-            var existing = Native.FindWindowExW(Native.HWND_MESSAGE, 0, TrayIcon.WindowClass, null);
+            var existing = Native.FindWindowExW(0, 0, TrayIcon.WindowClass, null);
             if (existing != 0) Native.PostMessageW(existing, TrayIcon.ShowPanelMessage, 0, 0);
             return 0;
         }

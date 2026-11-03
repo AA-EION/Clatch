@@ -154,6 +154,15 @@ jobs:
           $p.Refresh()
           "resident memory: {0:N1} MB" -f ($p.WorkingSet64 / 1MB)
           Stop-Process $p
+      - name: Panel and menu open from the icon (UI smoke test)
+        shell: pwsh
+        run: ./windows/scripts/ui-smoke.ps1 -Exe windows/out/win-x64/Clatch.exe -Shots windows/out/shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-ui-screenshots
+          path: windows/out/shots/*.png
+          if-no-files-found: warn
       - name: Install with the installer, launch
         shell: pwsh
         run: |

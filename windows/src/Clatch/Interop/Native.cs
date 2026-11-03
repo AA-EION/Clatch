@@ -64,6 +64,27 @@ internal static unsafe partial class Native
     [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16)]
     public static partial nint GetModuleHandleW(string? name);
 
+    public const uint WS_POPUP = 0x80000000, WS_EX_TOOLWINDOW = 0x00000080, WM_NULL = 0x0000;
+
+    // ---- Context menu (the classic right-click menu of a notification area icon) ----
+
+    public const uint MF_STRING = 0x0, MF_GRAYED = 0x1, MF_CHECKED = 0x8, MF_SEPARATOR = 0x800, MF_DEFAULT = 0x1000;
+    public const uint TPM_RIGHTBUTTON = 0x2, TPM_RETURNCMD = 0x100, TPM_NONOTIFY = 0x80, TPM_BOTTOMALIGN = 0x20;
+
+    [LibraryImport("user32.dll")]
+    public static partial nint CreatePopupMenu();
+
+    [LibraryImport("user32.dll", StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool AppendMenuW(nint menu, uint flags, nuint id, string? text);
+
+    [LibraryImport("user32.dll")]
+    public static partial int TrackPopupMenuEx(nint menu, uint flags, int x, int y, nint hwnd, nint parameters);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool DestroyMenu(nint menu);
+
     // ---- Hot key ------------------------------------------------------------
 
     public const uint MOD_NOREPEAT = 0x4000;
