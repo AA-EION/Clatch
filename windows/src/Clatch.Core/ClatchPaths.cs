@@ -14,7 +14,8 @@ namespace Clatch.Core;
 /// folder (protected with DPAPI for the Windows user), so each copy of the
 /// folder is self-contained.
 /// </remarks>
-public sealed record ClatchPaths(string ClaudeData, string ClatchRoot, IReadOnlyList<DataFolder>? ExtraData = null)
+public sealed record ClatchPaths(string ClaudeData, string ClatchRoot, IReadOnlyList<DataFolder>? ExtraData = null,
+                                 string? ProfileRoot = null)
 {
     /// <summary>Key of the main data folder (its stash keeps the original "Claude" name).</summary>
     public const string MainKey = "Claude";
@@ -30,14 +31,29 @@ public sealed record ClatchPaths(string ClaudeData, string ClatchRoot, IReadOnly
     /// <summary>A stable description, to notice when detection changes.</summary>
     public string Signature => string.Join("|", Folders.Select(f => $"{f.Key}={f.Live}")).ToUpperInvariant();
 
-    /// <summary>Where an inactive account keeps the folder with this key.</summary>
-    public string Stash(Guid id, string key) => Path.Combine(AccountsFolder, id.ToString("D"), key);
+    /// <summary>
+    /// Where an inactive account keeps the folder with this key. With a
+    /// <see cref="ProfileRoot"/> (Windows: %LOCALAPPDATA%), each profile's
+    /// main folder sits directly in it as "Clatch-&lt;id&gt;": Claude's Cowork VM
+    /// service only looks for a profile's files directly under %LOCALAPPDATA%,
+    /// so in a nested folder Cowork would not start. Side by side, this folder
+    /// is what that profile's Claude runs from.
+    /// </summary>
+    public string Stash(Guid id, string key)
+    {
+        if (ProfileRoot is null) return LegacyStash(id, key);
+        var name = "Clatch-" + id.ToString("N")[..12];
+        return key == MainKey ? Path.Combine(ProfileRoot, name) : Path.Combine(ProfileRoot, $"{name}-{key}");
+    }
+
+    /// <summary>The layout before <see cref="ProfileRoot"/>: Accounts\&lt;id&gt;\&lt;key&gt;.</summary>
+    public string LegacyStash(Guid id, string key) => Path.Combine(AccountsFolder, id.ToString("D"), key);
 
     public string StateFile => Path.Combine(ClatchRoot, "accounts.json");
     public string JournalFile => Path.Combine(ClatchRoot, "switch-journal.json");
     /// <summary>The standard folder holding every account that is not active.</summary>
     public string AccountsFolder => Path.Combine(ClatchRoot, "Accounts");
-    public string Stash(Guid id) => Path.Combine(AccountsFolder, id.ToString("D"), "Claude");
+    public string Stash(Guid id) => Stash(id, MainKey);
 }
 
 /// <summary>One live folder of Claude's data and the name its parked copy gets.</summary>

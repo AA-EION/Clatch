@@ -96,13 +96,78 @@ public sealed class AccountStore
         if (id == State.ActiveId) throw new AccountStoreException("Switch to another account before removing this one.");
         var account = State.Accounts.FirstOrDefault(a => a.Id == id)
             ?? throw new AccountStoreException("That account no longer exists.");
-        var folder = Path.GetDirectoryName(Paths.Stash(id))!;
-        if (Directory.Exists(folder))
+        var folders = Paths.Folders.Select(f => Paths.Stash(id, f.Key))
+            .Append(Path.Combine(Paths.AccountsFolder, id.ToString("D")))
+            .Where(Directory.Exists).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        foreach (var folder in folders)
         {
             if (deleteFolder is not null) deleteFolder(folder); else Directory.Delete(folder, recursive: true);
         }
         State.Accounts.Remove(account);
         Save();
+    }
+
+    /// <summary>Saves edits to a profile (name, badge, colour, environment, flags).</summary>
+    public void Update(Account account)
+    {
+        var index = State.Accounts.FindIndex(a => a.Id == account.Id);
+        if (index < 0) throw new AccountStoreException("That account no longer exists.");
+        var name = account.Name.Trim();
+        account.Name = name.Length == 0 ? State.Accounts[index].Name : name;
+        State.Accounts[index] = account;
+        Save();
+    }
+
+    /// <summary>Where a profile's Claude data lives now: Claude's own folder for the
+    /// active profile, its own folder for every other one (what it runs from side by side).</summary>
+    public string DataFolder(Guid id) => id == State.ActiveId ? Paths.ClaudeData : Paths.Stash(id);
+
+    /// <summary>Side by side: a new profile is a new, empty folder Claude fills when it starts there.</summary>
+    public Account CreateProfile(string name)
+    {
+        var trimmed = name.Trim();
+        var account = new Account { Name = trimmed.Length == 0 ? SuggestedNewName() : trimmed, LastUsedAt = DateTimeOffset.Now };
+        Directory.CreateDirectory(Paths.Stash(account.Id));
+        State.Accounts.Add(account);
+        Save();
+        return account;
+    }
+
+    public void MarkUsed(Guid id)
+    {
+        if (State.Accounts.FirstOrDefault(a => a.Id == id) is not { } account) return;
+        account.LastUsedAt = DateTimeOffset.Now;
+        try { Save(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+    }
+
+    /// <summary>
+    /// Moves profiles saved in the older layout (Accounts\&lt;id&gt;\Claude) to where
+    /// <see cref="ClatchPaths.Stash(Guid, string)"/> now puts them. Same drive, so
+    /// each move is a rename that happens whole or not at all; a folder that is
+    /// in use stays put and is moved on a later start. Returns what moved.
+    /// </summary>
+    public List<string> MigrateLegacyProfiles()
+    {
+        var moved = new List<string>();
+        if (Paths.ProfileRoot is null) return moved;
+        foreach (var account in State.Accounts.Where(a => a.Id != State.ActiveId))
+        {
+            foreach (var folder in Paths.Folders)
+            {
+                var legacy = Paths.LegacyStash(account.Id, folder.Key);
+                var target = Paths.Stash(account.Id, folder.Key);
+                if (!Directory.Exists(legacy) || Exists(target)) continue;
+                try
+                {
+                    Directory.Move(legacy, target);
+                    moved.Add($"{account.Name}: {folder.Key}");
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+            TryDeleteDirectory(Path.Combine(Paths.AccountsFolder, account.Id.ToString("D")));
+        }
+        return moved;
     }
 
     public string SuggestedNewName()
@@ -226,7 +291,7 @@ public sealed class AccountStore
                 }
             }
         }
-        TryDeleteDirectory(Path.GetDirectoryName(Paths.Stash(journal.To))!);
+        if (Paths.ProfileRoot is null) TryDeleteDirectory(Path.GetDirectoryName(Paths.Stash(journal.To))!);
 
         // 4. Record the result, then drop the journal.
         if (journal.NewAccount is { } added && State.Accounts.All(a => a.Id != added.Id))

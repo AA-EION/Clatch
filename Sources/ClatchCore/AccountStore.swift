@@ -118,6 +118,44 @@ public final class AccountStore {
         try save()
     }
 
+    /// Saves edits to a profile (name, badge, colour, environment, flags).
+    public func update(_ account: Account) throws {
+        guard let index = state.accounts.firstIndex(where: { $0.id == account.id }) else {
+            throw AccountStoreError.unknownAccount
+        }
+        var edited = account
+        edited.name = account.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if edited.name.isEmpty { edited.name = state.accounts[index].name }
+        state.accounts[index] = edited
+        try save()
+    }
+
+    /// Where a profile's Claude data lives right now: Claude's own folder for
+    /// the active profile, the profile's parked folder for every other one.
+    /// Side by side, each profile's Claude runs straight from this folder.
+    public func dataFolder(for id: UUID) -> URL {
+        id == state.activeID ? paths.claudeData : paths.stash(for: id)
+    }
+
+    /// Side by side: a new profile is just a new, empty folder that Claude
+    /// fills when it starts there. Nothing is moved.
+    @discardableResult
+    public func createProfile(named name: String) throws -> Account {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let account = Account(name: trimmed.isEmpty ? suggestedNewName() : trimmed, lastUsedAt: Date())
+        try fileManager.createDirectory(at: paths.stash(for: account.id), withIntermediateDirectories: true)
+        state.accounts.append(account)
+        try save()
+        return account
+    }
+
+    /// Records that a profile was just used (shown as "Used 2 min ago").
+    public func markUsed(_ id: UUID) {
+        guard let index = state.accounts.firstIndex(where: { $0.id == id }) else { return }
+        state.accounts[index].lastUsedAt = Date()
+        try? save()
+    }
+
     /// A name for the next new account that is not taken yet.
     public func suggestedNewName() -> String {
         var n = state.accounts.count + 1

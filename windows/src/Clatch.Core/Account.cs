@@ -15,6 +15,53 @@ public sealed record Account
     public string Name { get; set; } = "";
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.Now;
     public DateTimeOffset? LastUsedAt { get; set; }
+    /// <summary>Text on the profile's badge (a letter or an emoji); null = first letter of the name.</summary>
+    public string? Badge { get; set; }
+    /// <summary>Badge colour "#RRGGBB"; null = picked from the id.</summary>
+    public string? ColorHex { get; set; }
+    /// <summary>Environment variables for this profile's Claude (applied when it starts).</summary>
+    public Dictionary<string, string> Environment { get; set; } = [];
+    /// <summary>Extra command-line flags for this profile's Claude (applied when it starts).</summary>
+    public List<string> Arguments { get; set; } = [];
+
+    /// <summary>What the badge shows: the custom badge, else the name's first letter.</summary>
+    [JsonIgnore]
+    public string BadgeText
+    {
+        get
+        {
+            var custom = Badge?.Trim();
+            if (!string.IsNullOrEmpty(custom))
+            {
+                var e = System.Globalization.StringInfo.GetTextElementEnumerator(custom);
+                var text = "";
+                for (var i = 0; i < 2 && e.MoveNext(); i++) text += e.GetTextElement();
+                return text;
+            }
+            var name = Name.Trim();
+            return name.Length > 0 ? name[..1].ToUpperInvariant() : "?";
+        }
+    }
+
+    public static readonly string[] Palette = ["#D97757", "#0A84FF", "#AF52DE", "#30A14E", "#E5487D", "#0FA3B1", "#5E5CE6", "#B07D48"];
+
+    /// <summary>The badge colour: the chosen one, else a stable pick from the palette.</summary>
+    [JsonIgnore]
+    public string ResolvedColorHex
+    {
+        get
+        {
+            if (ColorHex is { } hex && IsValidColor(hex)) return (hex.StartsWith('#') ? hex : "#" + hex).ToUpperInvariant();
+            var hash = Id.ToString("D").ToUpperInvariant().Aggregate(0, (h, c) => (h * 31 + c) & 0xFFFF);
+            return Palette[hash % Palette.Length];
+        }
+    }
+
+    public static bool IsValidColor(string hex)
+    {
+        var body = hex.StartsWith('#') ? hex[1..] : hex;
+        return body.Length == 6 && body.All(Uri.IsHexDigit);
+    }
 
     /// <summary>Up to two letters for the avatar: "Work Account" → "WA".</summary>
     [JsonIgnore]

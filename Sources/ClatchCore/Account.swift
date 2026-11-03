@@ -14,12 +14,43 @@ public struct Account: Codable, Identifiable, Hashable, Sendable {
     public var name: String
     public var createdAt: Date
     public var lastUsedAt: Date?
+    /// Text on the profile's badge (a letter or an emoji); nil = first letter of the name.
+    public var badge: String?
+    /// Badge colour as "#RRGGBB"; nil = a colour picked from the id.
+    public var colorHex: String?
+    /// Environment variables for this profile's Claude (applied when it starts).
+    public var environment: [String: String]
+    /// Extra command-line flags for this profile's Claude (applied when it starts).
+    public var arguments: [String]
 
-    public init(id: UUID = UUID(), name: String, createdAt: Date = Date(), lastUsedAt: Date? = nil) {
+    public init(id: UUID = UUID(), name: String, createdAt: Date = Date(), lastUsedAt: Date? = nil,
+                badge: String? = nil, colorHex: String? = nil,
+                environment: [String: String] = [:], arguments: [String] = []) {
         self.id = id
         self.name = name
         self.createdAt = createdAt
         self.lastUsedAt = lastUsedAt
+        self.badge = badge
+        self.colorHex = colorHex
+        self.environment = environment
+        self.arguments = arguments
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, createdAt, lastUsedAt, badge, colorHex, environment, arguments
+    }
+
+    /// Reads accounts saved by older versions, which lack the newer fields.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        lastUsedAt = try c.decodeIfPresent(Date.self, forKey: .lastUsedAt)
+        badge = try c.decodeIfPresent(String.self, forKey: .badge)
+        colorHex = try c.decodeIfPresent(String.self, forKey: .colorHex)
+        environment = try c.decodeIfPresent([String: String].self, forKey: .environment) ?? [:]
+        arguments = try c.decodeIfPresent([String].self, forKey: .arguments) ?? []
     }
 
     /// Up to two letters for the avatar: "Work Account" → "WA", "personal" → "PE".
@@ -30,6 +61,29 @@ public struct Account: Codable, Identifiable, Hashable, Sendable {
         }
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         return String(trimmed.prefix(2)).uppercased()
+    }
+
+    /// What the profile's badge shows: the custom badge, else the name's first letter.
+    public var badgeText: String {
+        if let badge, !badge.trimmingCharacters(in: .whitespaces).isEmpty {
+            return String(badge.trimmingCharacters(in: .whitespaces).prefix(2))
+        }
+        return name.trimmingCharacters(in: .whitespaces).first.map { String($0).uppercased() } ?? "?"
+    }
+
+    /// The badge colour: the chosen one, else a stable pick from a palette by id.
+    public var resolvedColorHex: String {
+        if let colorHex, Account.isValidColor(colorHex) { return colorHex.uppercased() }
+        let hash = id.uuidString.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
+        return Account.palette[hash % Account.palette.count]
+    }
+
+    /// Colours offered in the profile editor (readable with white text, light and dark mode).
+    public static let palette = ["#D97757", "#0A84FF", "#AF52DE", "#30A14E", "#E5487D", "#0FA3B1", "#5E5CE6", "#B07D48"]
+
+    public static func isValidColor(_ hex: String) -> Bool {
+        let body = hex.hasPrefix("#") ? hex.dropFirst() : Substring(hex)
+        return body.count == 6 && body.allSatisfy(\.isHexDigit)
     }
 }
 
