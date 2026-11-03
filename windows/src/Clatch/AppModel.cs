@@ -40,6 +40,10 @@ internal sealed class AppModel
     private AccountStore store;
     private DispatcherQueueTimer? pollTimer;
     private bool claudeWasRunning;
+    /// <summary>Bumped by every new switch or cancel, so late notifications from an old one are ignored.</summary>
+    private int generation;
+    private DateTimeOffset quitRequestedAt;
+    private int moveAttempts;
     private int lastLeftovers = -1;
     private DateTimeOffset phaseSince = DateTimeOffset.Now;
 
@@ -196,16 +200,21 @@ internal sealed class AppModel
         }
         catch (Exception e) { Log.Write($"Could not list saved credentials: {e.Message}"); }
         Log.Write($"Switch requested: {Describe(operation)}; active={State.Active?.Name}; Claude running={claudeWasRunning} [{Claude.DescribeRunning()}]");
+        generation++;
+        moveAttempts = 0;
         if (claudeWasRunning)
         {
             SetPhase(Phase.WaitingForClaude);
+            WatchClaudeExit(Claude.ProcessTree());
             AskClaudeToQuit();
+            // A slow safety net only: the exit notifications do the real work.
+            StartPolling(TimeSpan.FromSeconds(1));
         }
         else
         {
             SetPhase(Phase.WaitingForHelpers);
+            StartPolling(TimeSpan.FromMilliseconds(150));
         }
-        StartPolling();
     }
 
     private string Describe(PendingOperation operation) => operation switch
@@ -224,9 +233,44 @@ internal sealed class AppModel
     }
 
     /// <summary>Restart Manager blocks while Claude decides, so it runs off the UI thread.</summary>
+    /// <summary>
+    /// Waits on Claude's processes with Windows' own exit notifications (no
+    /// polling): the moment the last one ends, the switch continues.
+    /// </summary>
+    private void WatchClaudeExit(List<uint> pids)
+    {
+        var mine = generation;
+        var processes = new List<Process>();
+        foreach (var pid in pids)
+        {
+            try { processes.Add(Process.GetProcessById((int)pid)); }
+            catch (ArgumentException) { } // already gone
+            catch (InvalidOperationException) { }
+        }
+        Log.Write($"Watching {processes.Count} Claude process(es) for exit");
+        Task.WhenAll(processes.Select(p => p.WaitForExitAsync())).ContinueWith(_ =>
+        {
+            foreach (var p in processes) p.Dispose();
+            dispatcher.TryEnqueue(() =>
+            {
+                if (mine != generation || Phase != Phase.WaitingForClaude) return;
+                Log.Write($"Claude closed ({(DateTimeOffset.Now - quitRequestedAt).TotalMilliseconds:N0} ms after the request)");
+                OnClaudeClosed();
+            });
+        });
+    }
+
+    private void OnClaudeClosed()
+    {
+        SetPhase(Phase.WaitingForHelpers);
+        StartPolling(TimeSpan.FromMilliseconds(150));
+        Poll();
+    }
+
     public void AskClaudeToQuit()
     {
         QuitDeclined = false;
+        quitRequestedAt = DateTimeOffset.Now;
         var install = Claude;
         Task.Run(() =>
         {
@@ -253,6 +297,7 @@ internal sealed class AppModel
 
     public void CancelSwitch()
     {
+        generation++;
         StopPolling();
         var reopen = claudeWasRunning && Phase is Phase.WaitingForHelpers or Phase.ConfirmLayout;
         Pending = null;
@@ -266,11 +311,11 @@ internal sealed class AppModel
         if (Phase == Phase.ConfirmLayout) Commit(layoutConfirmed: true);
     }
 
-    private void StartPolling()
+    private void StartPolling(TimeSpan interval)
     {
         StopPolling();
         pollTimer = dispatcher.CreateTimer();
-        pollTimer.Interval = TimeSpan.FromMilliseconds(250);
+        pollTimer.Interval = interval;
         pollTimer.Tick += (_, _) => Poll();
         pollTimer.Start();
     }
@@ -286,14 +331,17 @@ internal sealed class AppModel
         switch (Phase)
         {
             case Phase.WaitingForClaude:
-                if (!Claude.IsRunning) SetPhase(Phase.WaitingForHelpers);
+                // Safety net (e.g. Claude was restarted meanwhile): the exit
+                // notifications normally get here first.
+                if (!Claude.IsRunning) OnClaudeClosed();
                 break;
             case Phase.WaitingForHelpers:
-                // Windows refuses to move a folder with open files, so wait until
-                // every Claude process is gone (plus a moment for disk flushes).
-                var leftovers = Claude.LeftoverProcessCount();
-                if (leftovers != lastLeftovers) { Log.Write($"Claude processes still running: {leftovers}"); lastLeftovers = leftovers; }
-                if (leftovers == 0 && DateTimeOffset.Now - phaseSince > TimeSpan.FromMilliseconds(600))
+                // Only programs running from the data folder itself can hold it
+                // (local sessions); anything else holding a file just makes the
+                // move fail harmlessly, and it is retried (see Commit).
+                var leftovers = Claude.DataFolderProcessCount();
+                if (leftovers != lastLeftovers) { Log.Write($"Processes running from Claude's data folder: {leftovers}"); lastLeftovers = leftovers; }
+                if (leftovers == 0 && DateTimeOffset.Now - phaseSince > TimeSpan.FromMilliseconds(150))
                     Commit(layoutConfirmed: false);
                 break;
             default:
@@ -328,14 +376,15 @@ internal sealed class AppModel
         // runs. Chromium opens its files so that Windows still lets the folder
         // be renamed, so a running Claude would keep its session in memory
         // and simply come back to the front on the same account.
-        var stillRunning = Claude.LeftoverProcessCount();
+        var stillRunning = Claude.IsRunning ? 1 : Claude.DataFolderProcessCount();
         if (stillRunning > 0)
         {
             Log.Write($"Not switching yet: {stillRunning} Claude process(es) still running [{Claude.DescribeRunning()}]");
             claudeWasRunning = true;
             SetPhase(Phase.WaitingForClaude);
+            WatchClaudeExit(Claude.ProcessTree());
             AskClaudeToQuit();
-            StartPolling();
+            StartPolling(TimeSpan.FromSeconds(1));
             return;
         }
 
@@ -359,6 +408,24 @@ internal sealed class AppModel
             }
             ErrorMessage = null;
             Log.Write($"Switched: active={State.Active?.Name}; folders now: {Claude.DescribeFolders()}");
+        }
+        catch (AccountStoreException e) when (e.InnerException is IOException or UnauthorizedAccessException
+                                              && !store.HasInterruptedSwitch && moveAttempts < 40)
+        {
+            // Nothing moved: something (often Windows itself, right after Claude
+            // exits) still holds a file. Try again shortly instead of failing.
+            moveAttempts++;
+            if (moveAttempts == 1 || moveAttempts % 10 == 0)
+                Log.Write($"Claude's files still in use, retrying ({moveAttempts}): {e.InnerException?.Message}");
+            Phase = Phase.WaitingForHelpers;
+            Notify();
+            var retry = dispatcher.CreateTimer();
+            retry.Interval = TimeSpan.FromMilliseconds(500);
+            retry.IsRepeating = false;
+            var mine = generation;
+            retry.Tick += (_, _) => { if (mine == generation && Pending is not null) Commit(layoutConfirmed: true); };
+            retry.Start();
+            return;
         }
         catch (Exception e)
         {

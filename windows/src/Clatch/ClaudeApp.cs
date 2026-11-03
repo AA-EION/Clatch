@@ -105,7 +105,6 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
     {
         var classicLauncher = Path.Combine(ClassicFolder, "claude.exe");
         var classicInstalled = File.Exists(classicLauncher);
-        var package = FindPackage();
         var running = Snapshot(withPaths: true).Where(LooksLikeClaudeDesktop).ToList();
         if (running.FirstOrDefault(p => p.Path is not null) is { Path: { } seen }) LastSeenExecutable = seen;
 
@@ -121,7 +120,7 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
         if (running.FirstOrDefault(p => p.Family is not null) is { Family: { } family } packagedProcess)
         {
             var root = packagedProcess.Path is { } exe && PackageFromPath(exe) is { } fromPath ? fromPath.Root
-                     : package is { } pk && pk.FamilyName.Equals(family, StringComparison.OrdinalIgnoreCase) ? pk.InstallFolder
+                     : FindPackage() is { } pk && pk.FamilyName.Equals(family, StringComparison.OrdinalIgnoreCase) ? pk.InstallFolder
                      : null;
             var how = fromCommandLine is not null ? "running Claude (package, --user-data-dir)" : "running Claude (package)";
             return Packaged(family, root, how, fromCommandLine ?? PackagedDataFolder(family));
@@ -134,7 +133,7 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
 
         // 2. Not running: the installed package, if any, decides; its data folder
         //    is where Claude was last seen keeping it, or Claude-Data, or the old place.
-        if (package is { } installed)
+        if (FindPackage() is { } installed)
             return Packaged(installed.FamilyName, installed.InstallFolder, "package database", PackagedDataFolder(installed.FamilyName));
         if (LastSeenExecutable is { } last && IsInWindowsApps(last) && PackageFromPath(last) is { } fromLast)
             return Packaged(fromLast.FamilyName, fromLast.Root, "last seen running (package)", PackagedDataFolder(fromLast.FamilyName));
@@ -181,11 +180,35 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
 
     // ---- Package helpers ---------------------------------------------------------
 
+    private static (string FamilyName, string InstallFolder)? cachedPackage;
+    private static DateTime cachedPackageAt = DateTime.MinValue;
+
+    /// <summary>
+    /// Claude's package, if installed. Asks for the known family directly
+    /// (instant); only lists every installed package as a last resort, which
+    /// can take seconds, and remembers the answer for a while.
+    /// </summary>
     private static (string FamilyName, string InstallFolder)? FindPackage()
+    {
+        if (DateTime.UtcNow - cachedPackageAt < TimeSpan.FromMinutes(10)) return cachedPackage;
+        cachedPackage = FindPackageUncached();
+        cachedPackageAt = DateTime.UtcNow;
+        return cachedPackage;
+    }
+
+    private static (string FamilyName, string InstallFolder)? FindPackageUncached()
     {
         try
         {
-            foreach (var package in new PackageManager().FindPackagesForUser(string.Empty))
+            var manager = new PackageManager();
+            var known = new List<string> { "Claude_pzs8sxrjxfjjc" };
+            if (LastSeenExecutable is { } last && PackageFromPath(last) is { } fromLast) known.Insert(0, fromLast.FamilyName);
+            foreach (var family in known.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var direct = manager.FindPackagesForUser(string.Empty, family).FirstOrDefault();
+                if (direct is not null) return (direct.Id.FamilyName, direct.InstalledLocation.Path);
+            }
+            foreach (var package in manager.FindPackagesForUser(string.Empty))
             {
                 var id = package.Id;
                 var looksLikeClaude = id.Name.Contains("Claude", StringComparison.OrdinalIgnoreCase);
@@ -347,7 +370,11 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
     {
         var claude = Snapshot(withPaths: true).Where(IsClaudeProcess).ToList();
         var claudePids = claude.Select(p => p.Pid).ToHashSet();
-        var mains = claude.Where(p => !claudePids.Contains(p.ParentPid)).ToList();
+        // The app itself is claude.exe; other executables of the package (SSH
+        // helpers and the like) can outlive it and are not what holds the data.
+        var mains = claude.Where(p => !claudePids.Contains(p.ParentPid)
+                                      && p.Path is { } path
+                                      && System.IO.Path.GetFileName(path).Equals("claude.exe", StringComparison.OrdinalIgnoreCase)).ToList();
         if (mains.Count > 0 && mains[0].Path is { } path) LastSeenExecutable = path;
         return mains;
     }
@@ -361,6 +388,37 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
         return claude.Count == 0 ? "none"
             : string.Join("; ", claude.Take(5).Select(p => $"{p.Pid}<-{p.ParentPid} {p.Path} [{p.Family ?? "unpackaged"}]"))
               + (claude.Count > 5 ? $" (+{claude.Count - 5})" : "");
+    }
+
+    /// <summary>
+    /// Claude's running process tree right now: its main process and every
+    /// descendant (Electron helpers, local sessions it started). These are
+    /// what can hold its data, and what the switch waits for.
+    /// </summary>
+    public List<uint> ProcessTree()
+    {
+        var all = Snapshot(withPaths: true);
+        var claudePids = all.Where(IsClaudeProcess).Select(p => p.Pid).ToHashSet();
+        var tree = all.Where(p => claudePids.Contains(p.Pid) && !claudePids.Contains(p.ParentPid)
+                                  && p.Path is { } path
+                                  && System.IO.Path.GetFileName(path).Equals("claude.exe", StringComparison.OrdinalIgnoreCase))
+                      .Select(p => p.Pid).ToHashSet();
+        bool added;
+        do
+        {
+            added = false;
+            foreach (var p in all)
+                if (!tree.Contains(p.Pid) && tree.Contains(p.ParentPid) && tree.Add(p.Pid)) added = true;
+        } while (added);
+        return tree.ToList();
+    }
+
+    /// <summary>Processes running an executable stored inside Claude's data folders.</summary>
+    public int DataFolderProcessCount()
+    {
+        var folders = new List<string> { DataFolder };
+        folders.AddRange(ExtraDataFolders.Select(f => f.Live));
+        return Snapshot(withPaths: true).Count(p => folders.Any(f => IsUnder(p.Path, f)));
     }
 
     /// <summary>Anything still running from Claude (any process of its package, its
