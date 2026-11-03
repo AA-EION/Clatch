@@ -17,7 +17,7 @@ namespace Clatch;
 /// closes and restarts each profile's Claude, and gives each profile's
 /// windows their own taskbar button.
 /// </summary>
-internal sealed unsafe class ProfileRuntime : IDisposable
+internal sealed class ProfileRuntime : IDisposable
 {
     public sealed record Instance(uint MainPid, IReadOnlyList<uint> Tree);
 

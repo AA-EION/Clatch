@@ -23,6 +23,7 @@ $clatch = Join-Path $env:LOCALAPPDATA 'Clatch'
 $log = Join-Path $clatch 'clatch.log'
 
 Get-Process claude, Clatch -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-ChildItem $env:LOCALAPPDATA -Directory -Filter 'Clatch-*' | Remove-Item -Recurse -Force
 Remove-Item $clatch, $classic, (Join-Path $env:APPDATA 'Claude'), (Join-Path $env:LOCALAPPDATA 'Claude-Data') -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $classic | Out-Null
 
@@ -62,7 +63,9 @@ function Wait-Log($pattern, $count) {
 }
 
 function Stashed($name) {
-    Get-ChildItem (Join-Path $clatch 'Accounts') -Recurse -Filter Cookies -ErrorAction SilentlyContinue |
+    # Profiles live in %LOCALAPPDATA%\Clatch-<id> (older versions: Clatch\Accounts\<id>).
+    @(Get-ChildItem $env:LOCALAPPDATA -Directory -Filter 'Clatch-*') + @(Get-Item (Join-Path $clatch 'Accounts') -ErrorAction SilentlyContinue) |
+        Get-ChildItem -Recurse -Filter Cookies -ErrorAction SilentlyContinue |
         Where-Object { (Get-Content $_.FullName -Raw) -eq $name }
 }
 

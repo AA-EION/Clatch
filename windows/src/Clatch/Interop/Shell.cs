@@ -153,7 +153,7 @@ internal static unsafe partial class Shell
     private static void SetString(IPropertyStore store, PROPERTYKEY key, string? value)
     {
         var variant = new PROPVARIANT { vt = VT_EMPTY };
-        var text = 0;
+        nint text = 0;
         if (value is not null)
         {
             text = Marshal.StringToCoTaskMemUni(value);

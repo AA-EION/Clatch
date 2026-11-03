@@ -1069,7 +1069,7 @@ internal sealed class FlyoutWindow : Window
         return toggle;
     }
 
-    private UIElement PageHeader(string title, Page back = Page.Accounts)
+    private UIElement PageHeader(string title, Page backTo = Page.Accounts)
     {
         var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         var back = new Button
@@ -1078,7 +1078,7 @@ internal sealed class FlyoutWindow : Window
             Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0),
         };
         ToolTipService.SetToolTip(back, "Back");
-        back.Click += (_, _) => model.ShowPage(back);
+        back.Click += (_, _) => model.ShowPage(backTo);
         panel.Children.Add(back);
         panel.Children.Add(new TextBlock { Text = title, FontWeight = FontWeights.SemiBold, FontSize = 15, VerticalAlignment = VerticalAlignment.Center });
         return panel;
