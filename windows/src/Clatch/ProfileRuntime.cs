@@ -50,7 +50,7 @@ internal sealed class ProfileRuntime : IDisposable
         this.profileFor = profileFor;
     }
 
-    public void Start()
+    public unsafe void Start()
     {
         current = this;
         showHook = Shell.SetWinEventHook(Shell.EVENT_OBJECT_SHOW, Shell.EVENT_OBJECT_SHOW, 0, &OnWinEvent, 0, 0,
