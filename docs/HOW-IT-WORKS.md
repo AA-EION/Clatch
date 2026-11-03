@@ -91,3 +91,41 @@ On macOS 26 and later the popover itself is glass (system), and Clatch's rows, c
 use `glassEffect`, `GlassEffectContainer` and the `.glass`/`.glassProminent` button styles. Each
 use is gated with `#available(macOS 26, *)` (and `#if compiler(>=6.2)`); macOS 11–15 get a
 translucent fill with a hairline stroke over the popover's vibrant material instead.
+
+## The fail-safe
+
+Clatch depends on facts Anthropic doesn't promise to keep: where Claude's data folder is and
+what's in it. So before every switch, after Claude has closed and before anything moves, Clatch
+checks that:
+
+- the data folder exists if Claude was just running (Claude creates it on first launch), and is a folder;
+- it contains Chromium/Electron's own files (`Local State`, `Cookies` or `Network/Cookies`, `Preferences`);
+- it contains Claude's own files (`config.json` or `claude_desktop_config.json`).
+
+A folder that only holds the shared settings file belongs to an account that hasn't signed in
+yet, and is fine. If any check fails, the switch stops before anything is moved. Clatch lists what
+it found, plus any other folder where Claude may now keep its data (for example `Claude-3p`), and
+offers **Cancel** (Claude is reopened as it was) or **Continue Anyway**. The same check runs on
+macOS (`DataLayoutCheck.swift`) and Windows (`DataLayoutCheck.cs`).
+
+Separately, if the first move of a switch fails (on Windows typically because a file is still in
+use), nothing has changed, so the switch journal is dropped and the switch can simply be tried again.
+
+## Windows
+
+The Windows app (`windows/`) follows the same design:
+
+| macOS | Windows |
+|---|---|
+| `~/Library/Application Support/Claude` | `%APPDATA%\Claude` (classic installer) or `%LOCALAPPDATA%\Packages\<Claude package>\LocalCache\Roaming\Claude` (MSIX; Windows redirects the packaged app's AppData there) |
+| Encryption key in the Keychain ("Claude Safe Storage") | Key in `Local State` inside the data folder, protected with DPAPI for the Windows user, so each saved account is self-contained |
+| Quit Apple Event (`NSRunningApplication.terminate`) | Restart Manager (`RmShutdown` without force): Claude gets the messages it gets when Windows shuts down and may refuse. If it doesn't close, the user quits it from its notification area icon and Clatch carries on |
+| `proc_listallpids` / `proc_pidpath` | Toolhelp snapshot + `QueryFullProcessImageName`; Claude's main process is the `claude.exe` whose parent isn't `claude.exe` |
+| `rename(2)` works with open files | Directory moves **fail** while any file is open, so Clatch always waits for every process; a failed move changes nothing |
+| `NSStatusItem` + `NSPopover` | `Shell_NotifyIcon` on a message-only window + a borderless WinUI 3 window with Acrylic, closed when it loses focus, hidden from the taskbar and Alt+Tab |
+| Carbon `RegisterEventHotKey` | `RegisterHotKey` (same window, no permissions) |
+| `SMAppService` login item | Per-user `Run` registry value |
+
+Clatch for Windows is **unpackaged** on purpose: an MSIX-packaged Clatch would have its own AppData
+writes redirected too, and could not move Claude's real data folder. It's self-contained and
+compiled with NativeAOT, so it needs no .NET or Windows App SDK runtime on the PC.
