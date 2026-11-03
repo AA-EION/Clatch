@@ -44,14 +44,6 @@ jobs:
       - name: Unit tests (arm64)
         run: swift test
 
-      - name: Unit tests (x86_64 under Rosetta)
-        run: |
-          if arch -x86_64 /usr/bin/true 2>/dev/null; then
-            swift test --arch x86_64
-          else
-            echo "::notice::Rosetta not available; x86_64 tests run on the Intel job"
-          fi
-
       - name: Import signing certificate
         if: github.event_name != 'pull_request'
         env:
@@ -84,6 +76,24 @@ jobs:
           name: Clatch-dmg
           path: dist/*.dmg
           if-no-files-found: error
+
+  # ----------------------------------------------------------------------------
+  # Unit tests natively on Intel (SwiftPM cannot run x86_64 test bundles under
+  # Rosetta on Apple silicon runners).
+  # ----------------------------------------------------------------------------
+  tests-intel:
+    name: Unit tests · macos-15-intel
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Select the newest Xcode
+        run: |
+          latest="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          sudo xcode-select -s "${latest}"
+          xcodebuild -version; swift --version; uname -m
+      - name: Unit tests (x86_64)
+        run: swift test
 
   # ----------------------------------------------------------------------------
   # Install the DMG on Intel and on the previous macOS, and launch the app.

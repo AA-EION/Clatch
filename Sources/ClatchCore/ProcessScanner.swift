@@ -35,7 +35,8 @@ public enum ProcessScanner {
                 proc_pidpath(pid, pointer.baseAddress, UInt32(pointer.count))
             }
             guard length > 0 else { continue }
-            let path = String(cString: buffer)
+            let path = String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) },
+                              as: UTF8.self)
             if prefixes.contains(where: { path.hasPrefix($0) }) {
                 matches.append(pid)
             }
