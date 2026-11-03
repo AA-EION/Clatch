@@ -95,7 +95,7 @@ internal sealed class AppModel
             Settings.Save();
         }
         Log.Write($"Claude ({why}): installed={Claude.IsInstalled} packaged={Claude.IsPackaged} via {Claude.How}; " +
-                  $"family={Claude.PackageFamilyName ?? "-"}; folders: {Claude.DescribeFolders()}");
+                  $"family={Claude.PackageFamilyName ?? "-"}; folders: {Claude.DescribeFolders()}; package: {Claude.DescribePackageFolders()}");
     }
 
     private IReadOnlyList<string> SharedItems => Settings.ShareToolSettings ? AccountStore.DefaultSharedItems : [];
@@ -186,6 +186,12 @@ internal sealed class AppModel
         Pending = operation;
         RefreshClaude("switch requested");
         claudeWasRunning = Claude.IsRunning;
+        try
+        {
+            var credentials = Interop.Native.ClaudeCredentialNames();
+            Log.Write($"Saved Windows credentials mentioning Claude: {(credentials.Count == 0 ? "none" : string.Join("; ", credentials))}");
+        }
+        catch (Exception e) { Log.Write($"Could not list saved credentials: {e.Message}"); }
         Log.Write($"Switch requested: {Describe(operation)}; active={State.Active?.Name}; Claude running={claudeWasRunning} [{Claude.DescribeRunning()}]");
         if (claudeWasRunning)
         {
@@ -313,6 +319,21 @@ internal sealed class AppModel
                 PanelRequested?.Invoke();
                 return;
             }
+        }
+
+        // Last line of defence: never move anything while any Claude process
+        // runs. Chromium opens its files so that Windows still lets the folder
+        // be renamed, so a running Claude would keep its session in memory
+        // and simply come back to the front on the same account.
+        var stillRunning = Claude.LeftoverProcessCount();
+        if (stillRunning > 0)
+        {
+            Log.Write($"Not switching yet: {stillRunning} Claude process(es) still running [{Claude.DescribeRunning()}]");
+            claudeWasRunning = true;
+            SetPhase(Phase.WaitingForClaude);
+            AskClaudeToQuit();
+            StartPolling();
+            return;
         }
 
         SetPhase(Phase.Switching);

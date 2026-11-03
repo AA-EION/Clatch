@@ -37,7 +37,40 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
     /// otherwise come back after every switch.
     /// </summary>
     public IReadOnlyList<Clatch.Core.DataFolder> ExtraDataFolders =>
-        IsPackaged ? [new Clatch.Core.DataFolder("Claude-AppData", ClassicData)] : [];
+        IsPackaged
+            ? [
+                new Clatch.Core.DataFolder("Claude-AppData", ClassicData),
+                // The package's redirected %LOCALAPPDATA%\Claude, in case Claude keeps session data there.
+                new Clatch.Core.DataFolder("Claude-Local", Path.Combine(PackageFolder!, "LocalCache", "Local", "Claude")),
+              ]
+            : [];
+
+    /// <summary>%LOCALAPPDATA%\Packages\&lt;family&gt; for the MSIX version.</summary>
+    public string? PackageFolder => PackageFamilyName is null ? null : Path.Combine(LocalAppData, "Packages", PackageFamilyName);
+
+    /// <summary>The top two levels of the package's folders (names only), for the log:
+    /// shows where a sign-in could live if Claude ever moves it.</summary>
+    public string DescribePackageFolders()
+    {
+        if (PackageFolder is null || !Directory.Exists(PackageFolder)) return "-";
+        try
+        {
+            var lines = new List<string>();
+            foreach (var top in Directory.GetDirectories(PackageFolder))
+            {
+                var children = Directory.GetDirectories(top).Select(Path.GetFileName).Take(12);
+                lines.Add($"{Path.GetFileName(top)}/[{string.Join(", ", children)}]");
+                foreach (var cache in new[] { "Roaming", "Local" })
+                {
+                    var sub = Path.Combine(top, cache);
+                    if (Directory.Exists(sub))
+                        lines.Add($"{Path.GetFileName(top)}/{cache}/[{string.Join(", ", Directory.GetDirectories(sub).Select(Path.GetFileName).Take(12))}]");
+                }
+            }
+            return string.Join(" ", lines);
+        }
+        catch (Exception e) { return $"({e.GetType().Name})"; }
+    }
 
     /// <summary>One line per data folder: does it exist, and does it hold a sign-in?</summary>
     public string DescribeFolders()
@@ -64,16 +97,19 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
         var classicLauncher = Path.Combine(ClassicFolder, "claude.exe");
         var classicInstalled = File.Exists(classicLauncher);
         var package = FindPackage();
-        var running = Snapshot(withPaths: true).Where(p => LooksLikeClaudeDesktop(p.Path)).Select(p => p.Path!).ToList();
-        if (running.Count > 0) LastSeenExecutable = running[0];
+        var running = Snapshot(withPaths: true).Where(LooksLikeClaudeDesktop).ToList();
+        if (running.FirstOrDefault(p => p.Path is not null) is { Path: { } seen }) LastSeenExecutable = seen;
 
-        // 1. A running Claude tells us exactly which installation is in use.
-        var runningPackaged = running.FirstOrDefault(IsInWindowsApps);
-        if (runningPackaged is not null && PackageFromPath(runningPackaged) is { } fromProcess)
+        // 1. A running Claude tells us exactly which installation is in use:
+        //    its package identity, or the classic installer's folder.
+        if (running.FirstOrDefault(p => p.Family is not null) is { Family: { } family } packagedProcess)
         {
-            return Packaged(fromProcess.FamilyName, fromProcess.Root, "running Claude (package)");
+            var root = packagedProcess.Path is { } exe && PackageFromPath(exe) is { } fromPath ? fromPath.Root
+                     : package is { } pk && pk.FamilyName.Equals(family, StringComparison.OrdinalIgnoreCase) ? pk.InstallFolder
+                     : null;
+            return Packaged(family, root, "running Claude (package)");
         }
-        if (running.Count > 0 && runningPackaged is null)
+        if (running.Count > 0)
         {
             return Classic(classicInstalled, classicLauncher, "running Claude (classic installer)");
         }
@@ -189,7 +225,8 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
 
     // ---- Processes ------------------------------------------------------------
 
-    private readonly record struct ProcessInfo(uint Pid, uint ParentPid, string? Path);
+    /// <summary>A process, with its executable and (for MSIX apps) its package family.</summary>
+    private readonly record struct ProcessInfo(uint Pid, uint ParentPid, string? Path, string? Family);
 
     private static unsafe List<ProcessInfo> Snapshot(bool withPaths)
     {
@@ -204,8 +241,9 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
             do
             {
                 if (entry.th32ProcessID == 0 || entry.th32ProcessID == self) continue;
-                result.Add(new ProcessInfo(entry.th32ProcessID, entry.th32ParentProcessID,
-                                           withPaths ? ImagePath(entry.th32ProcessID) : null));
+                string? path = null, family = null;
+                if (withPaths) (path, family) = Identify(entry.th32ProcessID);
+                result.Add(new ProcessInfo(entry.th32ProcessID, entry.th32ParentProcessID, path, family));
             } while (Native.Process32NextW(snapshot, &entry));
         }
         finally
@@ -215,15 +253,22 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
         return result;
     }
 
-    private static unsafe string? ImagePath(uint pid)
+    /// <summary>Executable path and package family (null when not packaged) of a process.</summary>
+    private static unsafe (string? Path, string? Family) Identify(uint pid)
     {
         var handle = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
-        if (handle == 0) return null;
+        if (handle == 0) return (null, null);
         try
         {
             var buffer = stackalloc char[1024];
             uint size = 1024;
-            return Native.QueryFullProcessImageNameW(handle, 0, buffer, ref size) ? new string(buffer, 0, (int)size) : null;
+            var path = Native.QueryFullProcessImageNameW(handle, 0, buffer, ref size) ? new string(buffer, 0, (int)size) : null;
+            uint length = 256;
+            var familyBuffer = stackalloc char[256];
+            var family = Native.GetPackageFamilyName(handle, ref length, familyBuffer) == 0 && length > 1
+                ? new string(familyBuffer, 0, (int)length - 1)
+                : null;
+            return (path, family);
         }
         finally
         {
@@ -235,33 +280,35 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
         path is not null && folder.Length > 0
         && path.StartsWith(folder.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>The package of Claude Desktop: "Claude_pzs8sxrjxfjjc", or anything published as Anthropic's.</summary>
+    private static bool IsClaudeFamily(string? family) =>
+        family is not null
+        && (family.StartsWith("Claude_", StringComparison.OrdinalIgnoreCase)
+            || family.Contains("Anthropic", StringComparison.OrdinalIgnoreCase));
+
     /// <summary>
-    /// claude.exe from the Desktop app, either installation. The Claude Code
-    /// command-line tool is also called claude.exe, but lives elsewhere
-    /// (npm or ~\.local\bin), so it never matches.
+    /// A Claude Desktop process, either installation. MSIX processes are
+    /// recognised by their package identity, whatever the executable is
+    /// called; classic ones by living in %LOCALAPPDATA%\AnthropicClaude. The
+    /// Claude Code command-line tool (also claude.exe, but unpackaged and
+    /// installed elsewhere) never matches.
     /// </summary>
-    private static bool LooksLikeClaudeDesktop(string? path)
-    {
-        if (path is null || !System.IO.Path.GetFileName(path).Equals("claude.exe", StringComparison.OrdinalIgnoreCase)) return false;
-        if (IsUnder(path, ClassicFolder)) return true;
-        return IsInWindowsApps(path) && PackageFromPath(path) is { } p
-               && (p.FamilyName.Contains("Claude", StringComparison.OrdinalIgnoreCase)
-                   || p.FamilyName.Contains("Anthropic", StringComparison.OrdinalIgnoreCase));
-    }
+    private static bool LooksLikeClaudeDesktop(ProcessInfo p) =>
+        IsClaudeFamily(p.Family) || IsUnder(p.Path, ClassicFolder);
 
-    private bool IsClaudeExecutable(string? path) =>
-        LooksLikeClaudeDesktop(path) || (path is not null && ProgramFolders.Any(f => IsUnder(path, f))
-                                         && System.IO.Path.GetFileName(path).Equals("claude.exe", StringComparison.OrdinalIgnoreCase));
+    private bool IsClaudeProcess(ProcessInfo p) =>
+        LooksLikeClaudeDesktop(p)
+        || (p.Family is not null && PackageFamilyName is not null && p.Family.Equals(PackageFamilyName, StringComparison.OrdinalIgnoreCase))
+        || ProgramFolders.Any(f => IsUnder(p.Path, f));
 
-    /// <summary>Claude's main processes: claude.exe whose parent is not itself claude.exe
+    /// <summary>Claude's main processes: Claude processes whose parent is not a Claude process
     /// (Electron renderers and helpers are children of the main process).</summary>
     private List<ProcessInfo> MainProcesses()
     {
-        var all = Snapshot(withPaths: true);
-        var claude = all.Where(p => IsClaudeExecutable(p.Path)).ToList();
+        var claude = Snapshot(withPaths: true).Where(IsClaudeProcess).ToList();
         var claudePids = claude.Select(p => p.Pid).ToHashSet();
         var mains = claude.Where(p => !claudePids.Contains(p.ParentPid)).ToList();
-        if (mains.Count > 0) LastSeenExecutable = mains[0].Path;
+        if (mains.Count > 0 && mains[0].Path is { } path) LastSeenExecutable = path;
         return mains;
     }
 
@@ -270,14 +317,21 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
     /// <summary>Every running Claude Desktop process (for the log).</summary>
     public string DescribeRunning()
     {
-        var claude = Snapshot(withPaths: true).Where(p => IsClaudeExecutable(p.Path)).ToList();
-        return claude.Count == 0 ? "none" : string.Join("; ", claude.Take(4).Select(p => $"{p.Pid}<-{p.ParentPid} {p.Path}")) + (claude.Count > 4 ? $" (+{claude.Count - 4})" : "");
+        var claude = Snapshot(withPaths: true).Where(IsClaudeProcess).ToList();
+        return claude.Count == 0 ? "none"
+            : string.Join("; ", claude.Take(5).Select(p => $"{p.Pid}<-{p.ParentPid} {p.Path} [{p.Family ?? "unpackaged"}]"))
+              + (claude.Count > 5 ? $" (+{claude.Count - 5})" : "");
     }
 
-    /// <summary>Anything still running from Claude's program folder or data folder
-    /// (helpers, local Claude Code sessions). The data folder can only be moved once none is left.</summary>
-    public int LeftoverProcessCount() =>
-        Snapshot(withPaths: true).Count(p => IsClaudeExecutable(p.Path) || IsUnder(p.Path, DataFolder));
+    /// <summary>Anything still running from Claude (any process of its package, its
+    /// program folder or its data folders: helpers, local Claude Code sessions).
+    /// Nothing may be moved while one is left.</summary>
+    public int LeftoverProcessCount()
+    {
+        var folders = new List<string> { DataFolder };
+        folders.AddRange(ExtraDataFolders.Select(f => f.Live));
+        return Snapshot(withPaths: true).Count(p => IsClaudeProcess(p) || folders.Any(f => IsUnder(p.Path, f)));
+    }
 
     /// <summary>
     /// Asks Claude to close through the Restart Manager, the mechanism installers

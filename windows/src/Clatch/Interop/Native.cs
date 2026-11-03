@@ -185,6 +185,10 @@ internal static unsafe partial class Native
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool QueryFullProcessImageNameW(nint process, uint flags, char* buffer, ref uint size);
 
+    /// <summary>The package family of a packaged (MSIX) process; 15700 = not packaged.</summary>
+    [LibraryImport("kernel32.dll")]
+    public static partial int GetPackageFamilyName(nint process, ref uint length, char* familyName);
+
     [LibraryImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GetProcessTimes(nint process, out FILETIME creation, out FILETIME exit, out FILETIME kernel, out FILETIME user);
@@ -224,6 +228,55 @@ internal static unsafe partial class Native
 
     [LibraryImport("rstrtmgr.dll")]
     public static partial int RmEndSession(uint session);
+
+    // ---- Credential Manager (names only, for diagnostics) ------------------------
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct CREDENTIALW
+    {
+        public uint Flags, Type;
+        public nint TargetName, Comment;
+        public FILETIME LastWritten;
+        public uint CredentialBlobSize;
+        public nint CredentialBlob;
+        public uint Persist, AttributeCount;
+        public nint Attributes, TargetAlias, UserName;
+    }
+
+    [LibraryImport("advapi32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool CredEnumerateW(string? filter, uint flags, out uint count, out nint credentials);
+
+    [LibraryImport("advapi32.dll")]
+    public static partial void CredFree(nint buffer);
+
+    /// <summary>
+    /// Names (never contents) of the Windows saved credentials whose name or
+    /// user mentions Claude or Anthropic, with their size and last change.
+    /// </summary>
+    public static List<string> ClaudeCredentialNames()
+    {
+        var names = new List<string>();
+        if (!CredEnumerateW(null, 0, out var count, out var list)) return names;
+        try
+        {
+            for (var i = 0; i < count; i++)
+            {
+                var credential = (CREDENTIALW*)Marshal.ReadIntPtr(list, i * IntPtr.Size);
+                var target = Marshal.PtrToStringUni(credential->TargetName) ?? "";
+                var user = credential->UserName == 0 ? "" : Marshal.PtrToStringUni(credential->UserName) ?? "";
+                if (!(target + " " + user).Contains("claude", StringComparison.OrdinalIgnoreCase)
+                    && !(target + " " + user).Contains("anthropic", StringComparison.OrdinalIgnoreCase)) continue;
+                var written = DateTime.FromFileTimeUtc(((long)credential->LastWritten.High << 32) | credential->LastWritten.Low);
+                names.Add($"\"{target}\" (type {credential->Type}, {credential->CredentialBlobSize} bytes, changed {written:u})");
+            }
+        }
+        finally
+        {
+            CredFree(list);
+        }
+        return names;
+    }
 
     // ---- Recycle Bin ----------------------------------------------------------
 
