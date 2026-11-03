@@ -265,3 +265,42 @@ public sealed class AccountStoreTests : IDisposable
         Assert.False(Directory.Exists(appData)); // parked with Bob, not left behind for Alice
     }
 }
+
+public sealed class ClaudeCommandLineTests : IDisposable
+{
+    private readonly string root = Path.Combine(Path.GetTempPath(), "ClatchCmd-" + Guid.NewGuid().ToString("N"));
+
+    public ClaudeCommandLineTests() => Directory.CreateDirectory(root);
+
+    public void Dispose()
+    {
+        try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+    }
+
+    [Theory]
+    [InlineData("""Claude.exe --type=gpu-process --user-data-dir="C:\Users\eion\AppData\Local\Claude-Data\claude_pzs8sxrjxfjjc" --lang=es""",
+                @"C:\Users\eion\AppData\Local\Claude-Data\claude_pzs8sxrjxfjjc")]
+    [InlineData(@"Claude.exe --type=crashpad-handler --user-data-dir=C:\Users\eion\AppData\Local\Claude-Data\claude_pzs8sxrjxfjjc --other",
+                @"C:\Users\eion\AppData\Local\Claude-Data\claude_pzs8sxrjxfjjc")]
+    [InlineData("""claude.exe --user-data-dir="D:\Data With Spaces\Claude\" --x""", @"D:\Data With Spaces\Claude")]
+    [InlineData("Claude.exe --type=renderer --lang=es-419", null)]
+    [InlineData(null, null)]
+    public void ReadsUserDataDir(string? commandLine, string? expected) =>
+        Assert.Equal(expected, ClaudeCommandLine.UserDataDir(commandLine));
+
+    [Fact]
+    public void TellsRealProfilesFromMarkers()
+    {
+        var marker = Path.Combine(root, "Roaming-Claude");
+        Directory.CreateDirectory(marker);
+        File.WriteAllText(Path.Combine(marker, ".user-data-left.claude_pzs8sxrjxfjjc"), "");
+        Assert.False(ClaudeCommandLine.LooksLikeUserData(marker));
+        Assert.True(ClaudeCommandLine.HasMovedAwayMarker(marker));
+
+        var profile = Path.Combine(root, "Claude-Data", "claude_pzs8sxrjxfjjc");
+        Directory.CreateDirectory(Path.Combine(profile, "Network"));
+        File.WriteAllText(Path.Combine(profile, "Network", "Cookies"), "x");
+        Assert.True(ClaudeCommandLine.LooksLikeUserData(profile));
+        Assert.False(ClaudeCommandLine.HasMovedAwayMarker(profile));
+    }
+}

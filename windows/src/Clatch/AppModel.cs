@@ -68,6 +68,7 @@ internal sealed class AppModel
         this.dispatcher = dispatcher;
         Settings = Settings.Load();
         ClaudeInstall.LastSeenExecutable = Settings.LastClaudeExecutable;
+        ClaudeInstall.LastSeenDataFolder = Settings.LastClaudeDataFolder;
         Claude = ClaudeInstall.Detect();
         store = new AccountStore(PathsFor(Claude), SharedItems);
     }
@@ -89,9 +90,11 @@ internal sealed class AppModel
         {
             store.Load();
         }
-        if (ClaudeInstall.LastSeenExecutable is { } exe && exe != Settings.LastClaudeExecutable)
+        if ((ClaudeInstall.LastSeenExecutable is { } exe && exe != Settings.LastClaudeExecutable)
+            || (ClaudeInstall.LastSeenDataFolder is { } dataDir && dataDir != Settings.LastClaudeDataFolder))
         {
-            Settings.LastClaudeExecutable = exe;
+            Settings.LastClaudeExecutable = ClaudeInstall.LastSeenExecutable ?? Settings.LastClaudeExecutable;
+            Settings.LastClaudeDataFolder = ClaudeInstall.LastSeenDataFolder ?? Settings.LastClaudeDataFolder;
             Settings.Save();
         }
         Log.Write($"Claude ({why}): installed={Claude.IsInstalled} packaged={Claude.IsPackaged} via {Claude.How}; " +

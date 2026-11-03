@@ -17,6 +17,8 @@ internal sealed class Settings
     public bool ShareToolSettings { get; set; } = true;
     /// <summary>Where Claude Desktop was last seen running, to find it again when it is closed.</summary>
     public string? LastClaudeExecutable { get; set; }
+    /// <summary>Claude's data folder as last read from its --user-data-dir.</summary>
+    public string? LastClaudeDataFolder { get; set; }
 
     [JsonIgnore]
     public KeyCombo? EffectiveHotKey => HotKeyDisabled ? null : HotKey ?? KeyCombo.Default;

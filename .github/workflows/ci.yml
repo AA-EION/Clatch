@@ -166,6 +166,9 @@ jobs:
       - name: Real switch against a stand-in Claude (end-to-end)
         shell: pwsh
         run: ./windows/scripts/switch-test.ps1 -Exe windows/out/win-x64/Clatch.exe
+      - name: Real switch, data in Claude-Data via --user-data-dir (current Store layout)
+        shell: pwsh
+        run: ./windows/scripts/switch-test.ps1 -Exe windows/out/win-x64/Clatch.exe -CustomDataDir
       - name: Install with the installer, launch
         shell: pwsh
         run: |
@@ -219,6 +222,9 @@ jobs:
       - name: Real switch against a stand-in Claude
         shell: pwsh
         run: ./windows/scripts/switch-test.ps1 -Exe "$env:LOCALAPPDATA\Programs\Clatch\Clatch.exe"
+      - name: Real switch, data in Claude-Data via --user-data-dir
+        shell: pwsh
+        run: ./windows/scripts/switch-test.ps1 -Exe "$env:LOCALAPPDATA\Programs\Clatch\Clatch.exe" -CustomDataDir
       - uses: actions/upload-artifact@v4
         if: always()
         with:

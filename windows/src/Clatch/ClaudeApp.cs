@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Clatch.Core;
 using Clatch.Interop;
 using Windows.Management.Deployment;
 
@@ -37,7 +38,10 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
     /// otherwise come back after every switch.
     /// </summary>
     public IReadOnlyList<Clatch.Core.DataFolder> ExtraDataFolders =>
-        IsPackaged
+        // Only the older Store layout (data in the redirected %APPDATA%\Claude)
+        // reads several folders. Current versions use one explicit folder.
+        IsPackaged && PackageFolder is not null
+        && DataFolder.Equals(Path.Combine(PackageFolder, "LocalCache", "Roaming", "Claude"), StringComparison.OrdinalIgnoreCase)
             ? [
                 new Clatch.Core.DataFolder("Claude-AppData", ClassicData),
                 // The package's redirected %LOCALAPPDATA%\Claude, in case Claude keeps session data there.
@@ -92,6 +96,11 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
     /// <summary>Where Claude was last seen running (remembered across launches, for relaunching).</summary>
     public static string? LastSeenExecutable { get; set; }
 
+    /// <summary>Claude's data folder as last read from a running Claude (--user-data-dir), remembered across launches.</summary>
+    public static string? LastSeenDataFolder { get; set; }
+
+    private static readonly string ClaudeDataRoot = Path.Combine(LocalAppData, "Claude-Data");
+
     public static ClaudeInstall Detect()
     {
         var classicLauncher = Path.Combine(ClassicFolder, "claude.exe");
@@ -100,46 +109,75 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
         var running = Snapshot(withPaths: true).Where(LooksLikeClaudeDesktop).ToList();
         if (running.FirstOrDefault(p => p.Path is not null) is { Path: { } seen }) LastSeenExecutable = seen;
 
-        // 1. A running Claude tells us exactly which installation is in use:
-        //    its package identity, or the classic installer's folder.
+        // The most reliable fact of all: the data folder the running Claude was
+        // told to use. Electron passes --user-data-dir to every helper process.
+        var fromCommandLine = running
+            .Select(p => ClaudeCommandLine.UserDataDir(CommandLineOf(p.Pid)))
+            .FirstOrDefault(d => d is not null);
+        if (fromCommandLine is not null) LastSeenDataFolder = fromCommandLine;
+
+        // 1. Claude is running: its package identity (or the classic folder) says
+        //    which installation it is, its command line where the data is.
         if (running.FirstOrDefault(p => p.Family is not null) is { Family: { } family } packagedProcess)
         {
             var root = packagedProcess.Path is { } exe && PackageFromPath(exe) is { } fromPath ? fromPath.Root
                      : package is { } pk && pk.FamilyName.Equals(family, StringComparison.OrdinalIgnoreCase) ? pk.InstallFolder
                      : null;
-            return Packaged(family, root, "running Claude (package)");
+            var how = fromCommandLine is not null ? "running Claude (package, --user-data-dir)" : "running Claude (package)";
+            return Packaged(family, root, how, fromCommandLine ?? PackagedDataFolder(family));
         }
         if (running.Count > 0)
         {
-            return Classic(classicInstalled, classicLauncher, "running Claude (classic installer)");
+            var how = fromCommandLine is not null ? "running Claude (classic installer, --user-data-dir)" : "running Claude (classic installer)";
+            return Classic(classicInstalled, classicLauncher, how, fromCommandLine ?? ClassicDataFolder());
         }
 
-        // 2. Not running: compare the data folders that exist; the most recently used one wins.
-        var candidates = new List<(string Data, DateTime Used, Func<ClaudeInstall> Make)>();
-        if (Directory.Exists(ClassicData))
-            candidates.Add((ClassicData, LastUsed(ClassicData), () => Classic(classicInstalled, classicLauncher, "classic data folder")));
-        foreach (var (family, data) in PackageDataFolders())
-        {
-            var root = package is { } p && p.FamilyName == family ? p.InstallFolder : PackageRootFromLastSeen(family);
-            candidates.Add((data, LastUsed(data), () => Packaged(family, root, "package data folder")));
-        }
-        if (candidates.Count > 0)
-            return candidates.OrderByDescending(c => c.Used).First().Make();
-
-        // 3. No data yet (fresh install or a brand-new account): go by what is installed.
-        if (package is { } installed) return Packaged(installed.FamilyName, installed.InstallFolder, "package database");
+        // 2. Not running: the installed package, if any, decides; its data folder
+        //    is where Claude was last seen keeping it, or Claude-Data, or the old place.
+        if (package is { } installed)
+            return Packaged(installed.FamilyName, installed.InstallFolder, "package database", PackagedDataFolder(installed.FamilyName));
         if (LastSeenExecutable is { } last && IsInWindowsApps(last) && PackageFromPath(last) is { } fromLast)
-            return Packaged(fromLast.FamilyName, fromLast.Root, "last seen running (package)");
-        return Classic(classicInstalled, classicLauncher, classicInstalled ? "classic installer" : "not found");
+            return Packaged(fromLast.FamilyName, fromLast.Root, "last seen running (package)", PackagedDataFolder(fromLast.FamilyName));
+        return Classic(classicInstalled, classicLauncher, classicInstalled ? "classic installer" : "not found", ClassicDataFolder());
     }
 
-    private static ClaudeInstall Classic(bool installed, string launcher, string how) =>
-        new(installed || LastSeenExecutable is not null, false, ClassicData, [ClassicFolder], null,
+    /// <summary>
+    /// Data folder of the Microsoft Store version when Claude is not running to
+    /// tell us: where it was last seen, else %LOCALAPPDATA%\Claude-Data\&lt;family&gt;
+    /// (current versions), else the redirected %APPDATA%\Claude (older versions).
+    /// </summary>
+    private static string PackagedDataFolder(string family)
+    {
+        var legacy = Path.Combine(LocalAppData, "Packages", family, "LocalCache", "Roaming", "Claude");
+        var current = Path.Combine(ClaudeDataRoot, family.ToLowerInvariant());
+        if (LastSeenDataFolder is { } seen && !seen.Equals(legacy, StringComparison.OrdinalIgnoreCase)
+            && (ClaudeCommandLine.LooksLikeUserData(seen) || ClaudeCommandLine.HasMovedAwayMarker(legacy)))
+            return seen;
+        if (Directory.Exists(current) || ClaudeCommandLine.HasMovedAwayMarker(legacy)) return current;
+        if (ClaudeCommandLine.LooksLikeUserData(legacy)) return legacy;
+        return Directory.Exists(ClaudeDataRoot) ? current : legacy;
+    }
+
+    private static string ClassicDataFolder() =>
+        LastSeenDataFolder is { } seen && !ClaudeCommandLine.LooksLikeUserData(ClassicData) && ClaudeCommandLine.LooksLikeUserData(seen)
+            ? seen
+            : ClassicData;
+
+    private static unsafe string? CommandLineOf(uint pid)
+    {
+        var handle = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (handle == 0) return null;
+        try { return Native.CommandLineOf(handle); }
+        catch (Exception) { return null; }
+        finally { Native.CloseHandle(handle); }
+    }
+
+    private static ClaudeInstall Classic(bool installed, string launcher, string how, string data) =>
+        new(installed || LastSeenExecutable is not null, false, data, [ClassicFolder], null,
             installed ? launcher : LastSeenExecutable, null, how);
 
-    private static ClaudeInstall Packaged(string family, string? root, string how) =>
-        new(true, true, Path.Combine(LocalAppData, "Packages", family, "LocalCache", "Roaming", "Claude"),
-            root is null ? [] : [root], family, null, root, how);
+    private static ClaudeInstall Packaged(string family, string? root, string how, string data) =>
+        new(true, true, data, root is null ? [] : [root], family, null, root, how);
 
     // ---- Package helpers ---------------------------------------------------------
 
@@ -212,6 +250,8 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
         yield return Path.Combine(RoamingAppData, "Anthropic Claude");
         yield return Path.Combine(LocalAppData, "Claude");
         foreach (var (_, data) in PackageDataFolders())
+            if (!data.Equals(DataFolder, StringComparison.OrdinalIgnoreCase)) yield return data;
+        foreach (var data in SafeDirectories(ClaudeDataRoot, "*"))
             if (!data.Equals(DataFolder, StringComparison.OrdinalIgnoreCase)) yield return data;
         if (IsPackaged) yield return Path.Combine(Path.GetDirectoryName(DataFolder)!, "Claude-3p");
     }

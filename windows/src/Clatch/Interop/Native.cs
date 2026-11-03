@@ -185,6 +185,27 @@ internal static unsafe partial class Native
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool QueryFullProcessImageNameW(nint process, uint flags, char* buffer, ref uint size);
 
+    /// <summary>ProcessCommandLineInformation (60): the process's command line (Windows 8.1+).</summary>
+    [LibraryImport("ntdll.dll")]
+    public static partial int NtQueryInformationProcess(nint process, int infoClass, void* buffer, uint length, out uint returnLength);
+
+    /// <summary>The command line another process was started with, or null.</summary>
+    public static string? CommandLineOf(nint process)
+    {
+        const int ProcessCommandLineInformation = 60;
+        NtQueryInformationProcess(process, ProcessCommandLineInformation, null, 0, out var needed);
+        if (needed == 0 || needed > 1 << 20) return null;
+        var buffer = new byte[needed];
+        fixed (byte* p = buffer)
+        {
+            if (NtQueryInformationProcess(process, ProcessCommandLineInformation, p, needed, out _) != 0) return null;
+            // UNICODE_STRING { ushort Length; ushort MaximumLength; char* Buffer }, followed by the text.
+            var length = *(ushort*)p;
+            var text = *(char**)(p + IntPtr.Size);
+            return text == null ? null : new string(text, 0, length / 2);
+        }
+    }
+
     /// <summary>The package family of a packaged (MSIX) process; 15700 = not packaged.</summary>
     [LibraryImport("kernel32.dll")]
     public static partial int GetPackageFamilyName(nint process, ref uint length, char* familyName);

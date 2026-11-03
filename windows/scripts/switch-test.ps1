@@ -9,17 +9,21 @@
 # first account back and park Bob's.
 #
 #   pwsh windows/scripts/switch-test.ps1 -Exe path\to\Clatch.exe
-param([Parameter(Mandatory)] [string]$Exe)
+#
+# -CustomDataDir: like current Microsoft Store versions of Claude, the stand-in
+# is started with --user-data-dir pointing into %LOCALAPPDATA%\Claude-Data, and
+# Clatch must follow it (and remember it once Claude restarts without the flag).
+param([Parameter(Mandatory)] [string]$Exe, [switch]$CustomDataDir)
 $ErrorActionPreference = 'Stop'
 
 $classic = Join-Path $env:LOCALAPPDATA 'AnthropicClaude'
 $fake = Join-Path $classic 'claude.exe'
-$data = Join-Path $env:APPDATA 'Claude'
+$data = if ($CustomDataDir) { Join-Path $env:LOCALAPPDATA 'Claude-Data\claude_test' } else { Join-Path $env:APPDATA 'Claude' }
 $clatch = Join-Path $env:LOCALAPPDATA 'Clatch'
 $log = Join-Path $clatch 'clatch.log'
 
 Get-Process claude, Clatch -ErrorAction SilentlyContinue | Stop-Process -Force
-Remove-Item $clatch, $data, $classic -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item $clatch, $classic, (Join-Path $env:APPDATA 'Claude'), (Join-Path $env:LOCALAPPDATA 'Claude-Data') -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $classic | Out-Null
 
 # The stand-in: a WinForms window (WinForms closes on WM_QUERYENDSESSION/WM_ENDSESSION).
@@ -64,7 +68,7 @@ function Stashed($name) {
 
 try {
     Write-Account 'alice'
-    $claude = Start-Process $fake -PassThru
+    $claude = if ($CustomDataDir) { Start-Process $fake -ArgumentList "--user-data-dir=`"$data`"" -PassThru } else { Start-Process $fake -PassThru }
     Start-Sleep 3
 
     # 1. Add a second account: Claude must close, alice must be parked, Claude reopened.
@@ -87,7 +91,8 @@ try {
     if ($live -ne 'alice') { throw "expected alice's data to be live, found '$live'" }
     if (-not (Stashed 'bob')) { throw "Bob's data was not parked" }
     'step 2 ok: switched back to alice, Bob parked'
-    'switch test passed'
+    if ($CustomDataDir -and -not (Select-String -Path $log -Pattern '--user-data-dir' -Quiet)) { throw 'Clatch did not read --user-data-dir' }
+    "switch test passed (data in $data)"
 }
 finally {
     Get-Process claude, Clatch -ErrorAction SilentlyContinue | Stop-Process -Force
