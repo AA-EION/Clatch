@@ -36,35 +36,39 @@ function Shot($name) {
     $graphics.Dispose(); $bitmap.Dispose()
 }
 
-$p = Start-Process $Exe -PassThru
-Start-Sleep 6
-if ($p.HasExited) { throw "Clatch exited early (code $($p.ExitCode))" }
-$hwnd = [Win]::FindWindowExW([IntPtr]::Zero, [IntPtr]::Zero, 'ClatchTrayWindow', $null)
-if ($hwnd -eq [IntPtr]::Zero) { throw 'Clatch''s notification area window was not found' }
+try {
+    $p = Start-Process $Exe -PassThru
+    Start-Sleep 6
+    if ($p.HasExited) { throw "Clatch exited early (code $($p.ExitCode))" }
+    $hwnd = [Win]::FindWindowExW([IntPtr]::Zero, [IntPtr]::Zero, 'ClatchTrayWindow', $null)
+    if ($hwnd -eq [IntPtr]::Zero) { throw 'Clatch''s notification area window was not found' }
 
-# Left click on the icon: callback message WM_APP+1, LOWORD(lParam) = NIN_SELECT,
-# wParam = the click point (x | y << 16) near the bottom-right corner.
-$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-$point = [IntPtr](($screen.Width - 120) -bor (($screen.Height - 20) -shl 16))
-[Win]::PostMessageW($hwnd, 0x8001, $point, [IntPtr]0x400) | Out-Null
-Start-Sleep 4
-Shot 'panel'
+    # Left click on the icon: callback message WM_APP+1, LOWORD(lParam) = NIN_SELECT,
+    # wParam = the click point (x | y << 16) near the bottom-right corner.
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $point = [IntPtr](($screen.Width - 120) -bor (($screen.Height - 20) -shl 16))
+    [Win]::PostMessageW($hwnd, 0x8001, $point, [IntPtr]0x400) | Out-Null
+    Start-Sleep 4
+    Shot 'panel'
 
-# Second launch: asks the running Clatch to show its panel, then exits.
-$second = Start-Process $Exe -PassThru
-$second.WaitForExit(10000) | Out-Null
-"second instance exit code: $($second.ExitCode)"
+    # Second launch: asks the running Clatch to show its panel, then exits.
+    $second = Start-Process $Exe -PassThru
+    $second.WaitForExit(10000) | Out-Null
+    "second instance exit code: $($second.ExitCode)"
 
-# Right click: the classic context menu.
-[Win]::PostMessageW($hwnd, 0x8001, $point, [IntPtr]0x7B) | Out-Null
-Start-Sleep 3
-Shot 'menu'
-$p.Refresh()
-"resident memory with the panel open: {0:N1} MB" -f ($p.WorkingSet64 / 1MB)
-Stop-Process $p -ErrorAction SilentlyContinue
-
-"---- clatch.log ----"
-Get-Content $log
+    # Right click: the classic context menu.
+    [Win]::PostMessageW($hwnd, 0x8001, $point, [IntPtr]0x7B) | Out-Null
+    Start-Sleep 3
+    Shot 'menu'
+    $p.Refresh()
+    "resident memory with the panel open: {0:N1} MB" -f ($p.WorkingSet64 / 1MB)
+    Stop-Process $p -ErrorAction SilentlyContinue
+}
+finally {
+    Stop-Process -Name Clatch -ErrorAction SilentlyContinue
+    "---- clatch.log ----"
+    if (Test-Path $log) { Get-Content $log } else { "(no log written)" }
+}
 if (Select-String -Path $log -Pattern '^.* ERROR ' -Quiet) { throw 'Clatch logged an error' }
 if (-not (Select-String -Path $log -Pattern 'Panel shown' -Quiet)) { throw 'the panel did not open' }
 'UI smoke test passed'
