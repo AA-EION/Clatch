@@ -39,7 +39,9 @@ struct AccountsPage: View {
         VStack(alignment: .leading, spacing: 10) {
             header
 
-            if model.phase.isBusy {
+            if case .confirmLayout(let problems) = model.phase {
+                LayoutWarningCard(model: model, problems: problems)
+            } else if model.phase.isBusy {
                 SwitchProgressCard(model: model)
             }
             if let message = model.errorMessage {
@@ -231,7 +233,7 @@ struct SwitchProgressCard: View {
         case .waitingForClaude: return "Waiting for Claude to quit…"
         case .waitingForHelpers: return "Waiting for Claude to finish…"
         case .switching: return "Switching…"
-        case .idle: return ""
+        case .idle, .confirmLayout: return ""
         }
     }
 
@@ -241,9 +243,44 @@ struct SwitchProgressCard: View {
             return "If Claude asks whether to quit (for example while a session is running), choose Quit there. If you chose Cancel, nothing has changed: ask again or cancel here."
         case .waitingForHelpers:
             return "Claude is closed; its background processes are still exiting. Clatch switches as soon as they are done."
-        case .switching, .idle:
+        case .switching, .idle, .confirmLayout:
             return "Claude will reopen with the other account."
         }
+    }
+}
+
+/// Fail-safe: Claude's data folder is not what Clatch expects.
+struct LayoutWarningCard: View {
+    @ObservedObject var model: AppModel
+    var problems: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
+                Text("Claude's data looks different").font(.system(size: 13, weight: .semibold))
+            }
+            Text("Claude Desktop may have changed how it stores its data. Nothing has been moved yet.")
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(problems, id: \.self) { problem in
+                Text("• " + problem)
+                    .font(.caption)
+                    .foregroundColor(Color(NSColor.secondaryLabelColor))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text("Continuing may not switch the account, or may start Claude signed out. Your data stays in place either way.")
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Cancel") { model.cancelSwitch() }
+                Spacer()
+                Button("Continue Anyway") { model.continueDespiteLayout() }
+            }
+            .controlSize(.small)
+        }
+        .padding(12)
+        .glassSurface(tint: .orange)
     }
 }
 

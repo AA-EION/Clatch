@@ -193,4 +193,48 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertFalse(found.contains(getpid()))
         XCTAssertTrue(ProcessScanner.pids(withExecutableUnder: [root]).isEmpty)
     }
+
+    // MARK: Fail-safe for a changed data layout
+
+    func testLayoutCheckAcceptsNormalElectronFolder() throws {
+        try writeLive("alice", config: "{}")
+        try "{}".write(to: paths.claudeData.appendingPathComponent("Local State"), atomically: true, encoding: .utf8)
+        try "{}".write(to: paths.claudeData.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
+        XCTAssertTrue(DataLayoutCheck.inspect(claudeData: paths.claudeData, claudeHasRunSinceLastSwitch: true).isRecognized)
+    }
+
+    func testLayoutCheckFlagsMissingFolderAfterClaudeRan() {
+        let check = DataLayoutCheck.inspect(claudeData: paths.claudeData, claudeHasRunSinceLastSwitch: true)
+        XCTAssertFalse(check.isRecognized)
+        // A brand-new account that never opened Claude has no folder yet, which is fine.
+        XCTAssertTrue(DataLayoutCheck.inspect(claudeData: paths.claudeData, claudeHasRunSinceLastSwitch: false).isRecognized)
+    }
+
+    func testLayoutCheckFlagsUnrecognizedContentsAndPointsToAlternatives() throws {
+        try FileManager.default.createDirectory(at: paths.claudeData, withIntermediateDirectories: true)
+        try "x".write(to: paths.claudeData.appendingPathComponent("something-new.db"), atomically: true, encoding: .utf8)
+        let elsewhere = root.appendingPathComponent("Claude-3p")
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        let check = DataLayoutCheck.inspect(claudeData: paths.claudeData, claudeHasRunSinceLastSwitch: true,
+                                            alternatives: [elsewhere, root.appendingPathComponent("Nope")])
+        XCTAssertEqual(check.problems.count, 3)
+        XCTAssertTrue(check.problems.last?.contains("Claude-3p") ?? false)
+    }
+
+    func testLayoutCheckAcceptsFolderHoldingOnlySharedSettings() throws {
+        try FileManager.default.createDirectory(at: paths.claudeData, withIntermediateDirectories: true)
+        try "{}".write(to: paths.claudeData.appendingPathComponent("claude_desktop_config.json"), atomically: true, encoding: .utf8)
+        XCTAssertTrue(DataLayoutCheck.inspect(claudeData: paths.claudeData, claudeHasRunSinceLastSwitch: false).isRecognized)
+    }
+
+    func testFailedFirstMoveLeavesNoJournal() throws {
+        try writeLive("alice")
+        let store = AccountStore(paths: paths, sharedItems: [])
+        // Make parking impossible: the Accounts folder is a file.
+        try FileManager.default.createDirectory(at: paths.clatchRoot, withIntermediateDirectories: true)
+        try "x".write(to: paths.accountsFolder, atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try store.addAccount(named: "Bob"))
+        XCTAssertFalse(store.hasInterruptedSwitch)
+        XCTAssertEqual(liveMarker(), "alice")
+    }
 }

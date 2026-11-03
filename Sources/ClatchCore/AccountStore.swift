@@ -190,7 +190,19 @@ public final class AccountStore {
         }
         try fileManager.createDirectory(at: paths.clatchRoot, withIntermediateDirectories: true)
         try Self.encoder.encode(journal).write(to: paths.journalFile, options: .atomic)
-        try advance(journal)
+        let incoming = paths.stash(for: journal.to)
+        let incomingExisted = exists(incoming)
+        do {
+            try advance(journal)
+        } catch {
+            // If nothing moved yet (the outgoing account was not parked and the
+            // incoming one is still where it was), drop the journal so a later,
+            // different switch is not "recovered" into this one.
+            if !exists(outgoing) && exists(incoming) == incomingExisted {
+                try? fileManager.removeItem(at: paths.journalFile)
+            }
+            throw error
+        }
     }
 
     /// Idempotent: each step looks at the disk and only does what is still

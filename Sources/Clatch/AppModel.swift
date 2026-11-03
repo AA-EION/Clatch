@@ -12,6 +12,9 @@ enum SwitchPhase: Equatable {
     case waitingForClaude(since: Date)
     /// Claude's main process is gone; helpers or sessions are still exiting.
     case waitingForHelpers(since: Date)
+    /// Claude's data folder does not look the way Clatch expects (Claude may
+    /// have changed how it stores data). Nothing has moved; the user decides.
+    case confirmLayout(problems: [String])
     /// Moving folders (instant) and reopening Claude.
     case switching
 
@@ -179,8 +182,15 @@ final class AppModel: ObservableObject {
     /// Gives up waiting. Nothing has been moved yet, so nothing needs undoing.
     func cancelSwitch() {
         stopPolling()
+        // Claude was closed for this switch: give it back to the user.
+        let claudeWasClosedForUs: Bool
+        switch phase {
+        case .waitingForHelpers, .confirmLayout: claudeWasClosedForUs = claudeWasRunning
+        default: claudeWasClosedForUs = false
+        }
         pending = nil
         phase = .idle
+        if claudeWasClosedForUs && !ClaudeApp.isRunning { ClaudeApp.open() }
     }
 
     /// Switch even though helper processes are still around. Safe: a rename
@@ -189,6 +199,22 @@ final class AppModel: ObservableObject {
     func switchAnyway() {
         guard case .waitingForHelpers = phase else { return }
         commit()
+    }
+
+    /// The user read the warning about Claude's data folder and continues.
+    func continueDespiteLayout() {
+        guard case .confirmLayout = phase else { return }
+        commit(layoutConfirmed: true)
+    }
+
+    /// Other places a future Claude Desktop might keep its data; mentioned in
+    /// the warning when one of them exists.
+    private var alternativeDataFolders: [URL] {
+        let support = store.paths.claudeData.deletingLastPathComponent()
+        let home = URL(fileURLWithPath: NSHomeDirectory())
+        return ["Claude-3p", "Claude Desktop", "Anthropic", "Anthropic Claude", ClaudeApp.bundleIdentifier]
+            .map { support.appendingPathComponent($0) }
+            + [home.appendingPathComponent("Library/Containers/\(ClaudeApp.bundleIdentifier)")]
     }
 
     private func startPolling() {
@@ -219,16 +245,26 @@ final class AppModel: ObservableObject {
             if leftovers.isEmpty && Date().timeIntervalSince(since) > 0.6 {
                 commit()
             }
-        case .idle, .switching:
+        case .idle, .switching, .confirmLayout:
             stopPolling()
         }
     }
 
-    private func commit() {
+    private func commit(layoutConfirmed: Bool = false) {
         stopPolling()
         guard let operation = pending else {
             phase = .idle
             return
+        }
+        if !layoutConfirmed {
+            let check = DataLayoutCheck.inspect(claudeData: store.paths.claudeData,
+                                                claudeHasRunSinceLastSwitch: claudeWasRunning,
+                                                alternatives: alternativeDataFolders)
+            if !check.isRecognized {
+                phase = .confirmLayout(problems: check.problems)
+                requestPanel?()
+                return
+            }
         }
         phase = .switching
         store.sharedItems = preferences.shareToolSettings ? AccountStore.defaultSharedItems : []
