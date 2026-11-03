@@ -30,6 +30,32 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
     private static readonly string ClassicFolder = Path.Combine(LocalAppData, "AnthropicClaude");
     private static readonly string ClassicData = Path.Combine(RoamingAppData, "Claude");
 
+    /// <summary>
+    /// Folders besides <see cref="DataFolder"/> that Claude reads and that must
+    /// move with the account. The Microsoft Store version reads %APPDATA%\Claude
+    /// wherever its private copy has nothing, so a sign-in left there would
+    /// otherwise come back after every switch.
+    /// </summary>
+    public IReadOnlyList<Clatch.Core.DataFolder> ExtraDataFolders =>
+        IsPackaged ? [new Clatch.Core.DataFolder("Claude-AppData", ClassicData)] : [];
+
+    /// <summary>One line per data folder: does it exist, and does it hold a sign-in?</summary>
+    public string DescribeFolders()
+    {
+        static string Describe(string folder)
+        {
+            if (!Directory.Exists(folder)) return "absent";
+            var markers = new[] { "Local State", "Cookies", Path.Combine("Network", "Cookies"), "config.json", "Local Storage" }
+                .Where(m => File.Exists(Path.Combine(folder, m)) || Directory.Exists(Path.Combine(folder, m)));
+            return $"present [{string.Join(", ", markers)}], modified {LastUsed(folder):u}";
+        }
+        var lines = new List<string> { $"main {DataFolder}: {Describe(DataFolder)}" };
+        lines.AddRange(ExtraDataFolders.Select(f => $"{f.Key} {f.Live}: {Describe(f.Live)}"));
+        if (!IsPackaged)
+            lines.AddRange(PackageDataFolders().Select(p => $"(unused package copy) {p.Data}: {Describe(p.Data)}"));
+        return string.Join("; ", lines);
+    }
+
     /// <summary>Where Claude was last seen running (remembered across launches, for relaunching).</summary>
     public static string? LastSeenExecutable { get; set; }
 
@@ -149,7 +175,6 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
         yield return Path.Combine(RoamingAppData, "Anthropic");
         yield return Path.Combine(RoamingAppData, "Anthropic Claude");
         yield return Path.Combine(LocalAppData, "Claude");
-        if (IsPackaged) yield return ClassicData;
         foreach (var (_, data) in PackageDataFolders())
             if (!data.Equals(DataFolder, StringComparison.OrdinalIgnoreCase)) yield return data;
         if (IsPackaged) yield return Path.Combine(Path.GetDirectoryName(DataFolder)!, "Claude-3p");

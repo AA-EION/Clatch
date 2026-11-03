@@ -114,7 +114,9 @@ public sealed class AccountStore
     }
 
     public bool HasStoredData(Guid id) =>
-        id == State.ActiveId ? Directory.Exists(Paths.ClaudeData) : Directory.Exists(Paths.Stash(id));
+        id == State.ActiveId
+            ? Paths.Folders.Any(f => Directory.Exists(f.Live))
+            : Paths.Folders.Any(f => Directory.Exists(Paths.Stash(id, f.Key)));
 
     // ---- Switching ----------------------------------------------------------
 
@@ -159,13 +161,17 @@ public sealed class AccountStore
 
     private void Perform(SwitchJournal journal)
     {
-        var outgoing = Paths.Stash(journal.From);
-        if (Exists(outgoing))
-            throw new AccountStoreException($"Clatch found unexpected data at {outgoing}. Move it away and try again.");
+        foreach (var folder in Paths.Folders)
+        {
+            var parked = Paths.Stash(journal.From, folder.Key);
+            if (Exists(parked) && Exists(folder.Live))
+                throw new AccountStoreException($"Clatch found unexpected data at {parked}. Move it away and try again.");
+        }
         Directory.CreateDirectory(Paths.ClatchRoot);
         File.WriteAllText(Paths.JournalFile, JsonSerializer.Serialize(journal, CoreJsonContext.Default.SwitchJournal));
-        var incoming = Paths.Stash(journal.To);
-        var incomingExisted = Exists(incoming);
+        string Snapshot() => string.Join("|", Paths.Folders.Select(f =>
+            $"{Exists(f.Live)}{Exists(Paths.Stash(journal.From, f.Key))}{Exists(Paths.Stash(journal.To, f.Key))}"));
+        var before = Snapshot();
         try
         {
             Advance(journal);
@@ -173,7 +179,7 @@ public sealed class AccountStore
         catch (Exception e)
         {
             // Nothing moved yet (typically: a file is still open): forget this switch.
-            if (!Exists(outgoing) && Exists(incoming) == incomingExisted)
+            if (Snapshot() == before)
                 TryDelete(Paths.JournalFile);
             if (e is IOException or UnauthorizedAccessException)
                 throw new AccountStoreException(
@@ -185,37 +191,42 @@ public sealed class AccountStore
     /// <summary>Idempotent: each step only does what is still missing.</summary>
     private void Advance(SwitchJournal journal)
     {
-        var live = Paths.ClaudeData;
-        var outgoing = Paths.Stash(journal.From);
-        var incoming = Paths.Stash(journal.To);
-
-        // 1. Park the outgoing account.
-        if (Exists(live) && !Exists(outgoing))
+        // Every folder of the account, one after the other; each step only
+        // does what is still missing, so a re-run after a crash is safe.
+        foreach (var folder in Paths.Folders)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(outgoing)!);
-            Directory.Move(live, outgoing);
-        }
+            var live = folder.Live;
+            var outgoing = Paths.Stash(journal.From, folder.Key);
+            var incoming = Paths.Stash(journal.To, folder.Key);
 
-        // 2. Bring in the incoming account (a new account has nothing to bring).
-        if (!Exists(live) && Exists(incoming))
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(live)!);
-            Directory.Move(incoming, live);
-            TryDeleteDirectory(Path.GetDirectoryName(incoming)!);
-        }
-
-        // 3. Carry machine-wide settings over.
-        if (Exists(outgoing))
-        {
-            foreach (var item in SharedItems)
+            // 1. Park the outgoing account's folder.
+            if (Exists(live) && !Exists(outgoing))
             {
-                if (item.Length == 0 || item.Contains('/') || item.Contains('\\')) continue;
-                var source = Path.Combine(outgoing, item);
-                if (!File.Exists(source)) continue;
-                Directory.CreateDirectory(live);
-                File.Copy(source, Path.Combine(live, item), overwrite: true);
+                Directory.CreateDirectory(Path.GetDirectoryName(outgoing)!);
+                Directory.Move(live, outgoing);
+            }
+
+            // 2. Bring in the incoming account's folder (a new account has nothing to bring).
+            if (!Exists(live) && Exists(incoming))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(live)!);
+                Directory.Move(incoming, live);
+            }
+
+            // 3. Carry machine-wide settings over (MCP servers and other tools).
+            if (Exists(outgoing))
+            {
+                foreach (var item in SharedItems)
+                {
+                    if (item.Length == 0 || item.Contains('/') || item.Contains('\\')) continue;
+                    var source = Path.Combine(outgoing, item);
+                    if (!File.Exists(source)) continue;
+                    Directory.CreateDirectory(live);
+                    File.Copy(source, Path.Combine(live, item), overwrite: true);
+                }
             }
         }
+        TryDeleteDirectory(Path.GetDirectoryName(Paths.Stash(journal.To))!);
 
         // 4. Record the result, then drop the journal.
         if (journal.NewAccount is { } added && State.Accounts.All(a => a.Id != added.Id))

@@ -211,4 +211,57 @@ public sealed class AccountStoreTests : IDisposable
         File.WriteAllText(Path.Combine(paths.ClaudeData, "claude_desktop_config.json"), "{}");
         Assert.True(DataLayoutCheck.Inspect(paths.ClaudeData, false).IsRecognized);
     }
+
+    // ---- Accounts with more than one folder (Microsoft Store version of Claude) ----
+
+    [Fact]
+    public void AllFoldersOfAnAccountMoveTogether()
+    {
+        var appData = Path.Combine(root, "AppData-Claude");
+        var multi = paths with { ExtraData = [new DataFolder("Claude-AppData", appData)] };
+        WriteLive("alice");
+        Directory.CreateDirectory(appData);
+        File.WriteAllText(Path.Combine(appData, "Cookies"), "alice-fallback");
+
+        var store = new AccountStore(multi, []);
+        var alice = store.State.ActiveId!.Value;
+        var bob = store.AddAccount("Bob");
+
+        // Nothing of Alice may stay visible to Claude, or it signs her back in.
+        Assert.False(Directory.Exists(multi.ClaudeData));
+        Assert.False(Directory.Exists(appData));
+        Assert.Equal("alice", File.ReadAllText(Path.Combine(multi.Stash(alice, "Claude"), "Cookies")));
+        Assert.Equal("alice-fallback", File.ReadAllText(Path.Combine(multi.Stash(alice, "Claude-AppData"), "Cookies")));
+
+        // Bob signs in; Claude only writes its private copy.
+        WriteLive("bob");
+        store.SwitchTo(alice);
+        Assert.Equal("alice", LiveMarker());
+        Assert.Equal("alice-fallback", File.ReadAllText(Path.Combine(appData, "Cookies")));
+        Assert.Equal("bob", File.ReadAllText(Path.Combine(multi.Stash(bob.Id, "Claude"), "Cookies")));
+        Assert.False(Directory.Exists(multi.Stash(bob.Id, "Claude-AppData")));
+
+        store.SwitchTo(bob.Id);
+        Assert.Equal("bob", LiveMarker());
+        Assert.False(Directory.Exists(appData));
+    }
+
+    [Fact]
+    public void AccountsSavedBeforeExtraFoldersStillSwitch()
+    {
+        // Saved by an older Clatch with only the main folder.
+        WriteLive("alice");
+        var single = new AccountStore(paths, []);
+        var alice = single.State.ActiveId!.Value;
+        single.AddAccount("Bob");
+        WriteLive("bob");
+
+        var appData = Path.Combine(root, "AppData-Claude");
+        Directory.CreateDirectory(appData);
+        File.WriteAllText(Path.Combine(appData, "Cookies"), "old-fallback");
+        var multi = new AccountStore(paths with { ExtraData = [new DataFolder("Claude-AppData", appData)] }, []);
+        multi.SwitchTo(alice);
+        Assert.Equal("alice", LiveMarker());
+        Assert.False(Directory.Exists(appData)); // parked with Bob, not left behind for Alice
+    }
 }

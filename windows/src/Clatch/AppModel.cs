@@ -69,17 +69,21 @@ internal sealed class AppModel
         Settings = Settings.Load();
         ClaudeInstall.LastSeenExecutable = Settings.LastClaudeExecutable;
         Claude = ClaudeInstall.Detect();
-        store = new AccountStore(new ClatchPaths(Claude.DataFolder, Clatch.Settings.Folder), SharedItems);
+        store = new AccountStore(PathsFor(Claude), SharedItems);
     }
+
+    private static ClatchPaths PathsFor(ClaudeInstall claude) =>
+        new(claude.DataFolder, Clatch.Settings.Folder, claude.ExtraDataFolders);
 
     /// <summary>Re-detects Claude and points the account store at the data folder in use.</summary>
     private void RefreshClaude(string why)
     {
         Claude = ClaudeInstall.Detect();
-        if (!string.Equals(store.Paths.ClaudeData, Claude.DataFolder, StringComparison.OrdinalIgnoreCase))
+        var paths = PathsFor(Claude);
+        if (paths.Signature != store.Paths.Signature)
         {
-            Log.Write($"Claude's data folder is now {Claude.DataFolder} (was {store.Paths.ClaudeData})");
-            store = new AccountStore(new ClatchPaths(Claude.DataFolder, Clatch.Settings.Folder), SharedItems);
+            Log.Write($"Claude's data folders are now {paths.Signature} (were {store.Paths.Signature})");
+            store = new AccountStore(paths, SharedItems);
         }
         else
         {
@@ -91,7 +95,7 @@ internal sealed class AppModel
             Settings.Save();
         }
         Log.Write($"Claude ({why}): installed={Claude.IsInstalled} packaged={Claude.IsPackaged} via {Claude.How}; " +
-                  $"data={Claude.DataFolder} exists={Directory.Exists(Claude.DataFolder)}; family={Claude.PackageFamilyName ?? "-"}");
+                  $"family={Claude.PackageFamilyName ?? "-"}; folders: {Claude.DescribeFolders()}");
     }
 
     private IReadOnlyList<string> SharedItems => Settings.ShareToolSettings ? AccountStore.DefaultSharedItems : [];
@@ -316,7 +320,7 @@ internal sealed class AppModel
         var openClaude = claudeWasRunning && Settings.ReopenClaude;
         try
         {
-            Log.Write($"Moving data: live={store.Paths.ClaudeData} (exists={Directory.Exists(store.Paths.ClaudeData)}), accounts={store.Paths.AccountsFolder}");
+            Log.Write($"Moving data: {string.Join(", ", store.Paths.Folders.Select(f => $"{f.Key}={f.Live} (exists={Directory.Exists(f.Live)})"))}; accounts={store.Paths.AccountsFolder}");
             store.RecoverInterruptedSwitch();
             switch (operation)
             {
@@ -330,7 +334,7 @@ internal sealed class AppModel
                     break;
             }
             ErrorMessage = null;
-            Log.Write($"Switched: active={State.Active?.Name}; live folder exists={Directory.Exists(store.Paths.ClaudeData)}");
+            Log.Write($"Switched: active={State.Active?.Name}; folders now: {Claude.DescribeFolders()}");
         }
         catch (Exception e)
         {
