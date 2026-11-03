@@ -40,7 +40,7 @@ try {
     $p = Start-Process $Exe -PassThru
     Start-Sleep 6
     if ($p.HasExited) { throw "Clatch exited early (code $($p.ExitCode))" }
-    $hwnd = [Win]::FindWindowExW([IntPtr]::Zero, [IntPtr]::Zero, 'ClatchTrayWindow', $null)
+    $hwnd = [Win]::FindWindowExW([IntPtr]::Zero, [IntPtr]::Zero, 'ClatchTrayWindow', [NullString]::Value)
     if ($hwnd -eq [IntPtr]::Zero) { throw 'Clatch''s notification area window was not found' }
 
     # Left click on the icon: callback message WM_APP+1, LOWORD(lParam) = NIN_SELECT,
