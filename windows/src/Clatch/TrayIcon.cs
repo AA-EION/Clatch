@@ -96,7 +96,7 @@ internal sealed unsafe class TrayIcon : IDisposable
 
     // ---- Messages -------------------------------------------------------------
 
-    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
+    [UnmanagedCallersOnly]
     private static nint WndProc(nint hwnd, uint msg, nint wParam, nint lParam)
     {
         var tray = current;
