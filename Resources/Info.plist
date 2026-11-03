@@ -36,6 +36,30 @@
     <!-- Menu bar only: no Dock icon, no app menu. -->
     <key>LSUIElement</key>
     <true/>
+    <!-- clatch:// opens a profile (the per-profile launcher apps use it).
+         claude:// lets Clatch route sign-ins between profiles running side by
+         side; only while that setting is on is Clatch made the handler, and
+         Claude is made the handler again when it is turned off. -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.issen.clatch.profile-link</string>
+            <key>CFBundleURLSchemes</key>
+            <array><string>clatch</string></array>
+        </dict>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.issen.clatch.sign-in-router</string>
+            <key>CFBundleURLSchemes</key>
+            <array><string>claude</string></array>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+        </dict>
+    </array>
+    <!-- Sign-in routing hands a claude:// link to one specific Claude window. -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Clatch hands sign-in links to the Claude window of the profile that asked for them.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <!-- Idle menu bar agents may be quit by the system when memory is tight;

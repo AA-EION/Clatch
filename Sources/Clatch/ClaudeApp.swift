@@ -16,6 +16,14 @@ enum ClaudeApp {
 
     static var isInstalled: Bool { url != nil }
 
+    /// Claude's installed build number, read fresh from its bundle (the watchdog
+    /// compares it before and after a Claude quits on its own).
+    static var version: String? {
+        guard let url else { return nil }
+        let info = NSDictionary(contentsOf: url.appendingPathComponent("Contents/Info.plist"))
+        return (info?["CFBundleVersion"] as? String) ?? (info?["CFBundleShortVersionString"] as? String)
+    }
+
     /// Main app instances (normally one).
     static var running: [NSRunningApplication] {
         NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)

@@ -95,15 +95,17 @@ otool -l "${APP}/Contents/MacOS/Clatch" | awk '/cmd LC_RPATH/ {getline; getline;
 if [[ -n "${SIGN_IDENTITY}" ]]; then
   log "Signing with ${SIGN_IDENTITY} (hardened runtime)"
   SIGN_FLAGS=(--force --sign "${SIGN_IDENTITY}" --timestamp --options runtime)
+  APP_FLAGS=(--entitlements "${REPO_ROOT}/Resources/Clatch.entitlements")
 else
   log "Ad-hoc signing (set CLATCH_SIGN_IDENTITY for a distributable build)"
   SIGN_FLAGS=(--force --sign - --timestamp=none)
+  APP_FLAGS=()
 fi
 # Inside out: embedded libraries first, then the bundle.
 for lib in "${APP}/Contents/Frameworks/"*.dylib; do
   [[ -f "${lib}" ]] && codesign "${SIGN_FLAGS[@]}" "${lib}"
 done
-codesign "${SIGN_FLAGS[@]}" --identifier com.issen.clatch "${APP}"
+codesign "${SIGN_FLAGS[@]}" ${APP_FLAGS[@]+"${APP_FLAGS[@]}"} --identifier com.issen.clatch "${APP}"
 
 log "Verifying"
 codesign --verify --deep --strict --verbose=1 "${APP}"

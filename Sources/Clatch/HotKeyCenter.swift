@@ -26,6 +26,9 @@ final class HotKeyCenter {
     }
 
     var onPress: (() -> Void)?
+    /// Temporary shortcuts (while the switcher is open), by the index they were registered with.
+    var onExtraPress: ((Int) -> Void)?
+    private var extraRefs: [EventHotKeyRef] = []
     private(set) var registration: Registration = .off
 
     private var hotKeyRef: EventHotKeyRef?
@@ -59,6 +62,25 @@ final class HotKeyCenter {
         return registration
     }
 
+    /// Registers short-lived extra shortcuts (ids 100+). Ones that cannot be
+    /// registered are skipped silently: they are conveniences.
+    func registerExtras(_ combos: [KeyCombo]) {
+        unregisterExtras()
+        installHandlerIfNeeded()
+        for (index, combo) in combos.enumerated() {
+            var ref: EventHotKeyRef?
+            let status = RegisterEventHotKey(combo.keyCode, combo.modifiers,
+                                             EventHotKeyID(signature: Self.signature, id: UInt32(100 + index)),
+                                             GetEventDispatcherTarget(), 0, &ref)
+            if status == noErr, let ref { extraRefs.append(ref) }
+        }
+    }
+
+    func unregisterExtras() {
+        for ref in extraRefs { UnregisterEventHotKey(ref) }
+        extraRefs.removeAll()
+    }
+
     /// Temporarily releases the shortcut, e.g. while recording a new one.
     func unregister() {
         if let hotKeyRef { UnregisterEventHotKey(hotKeyRef) }
@@ -77,8 +99,13 @@ final class HotKeyCenter {
                 return OSStatus(eventNotHandledErr)
             }
             // Carbon delivers hot key events on the main thread's event loop.
+            let number = Int(id.id)
             MainActor.assumeIsolated {
-                HotKeyCenter.shared.onPress?()
+                if number >= 100 {
+                    HotKeyCenter.shared.onExtraPress?(number - 100)
+                } else {
+                    HotKeyCenter.shared.onPress?()
+                }
             }
             return noErr
         }, 1, &spec, nil, &handlerRef)

@@ -143,3 +143,42 @@ final class ProfileFeatureTests: XCTestCase {
         }
     }
 }
+
+final class RuntimeHelperTests: XCTestCase {
+    func testReadsOwnArguments() throws {
+        let arguments = try XCTUnwrap(ProcessArguments.of(getpid()))
+        XCTAssertFalse(arguments.isEmpty)
+        XCTAssertEqual(arguments.count, CommandLine.arguments.count)
+    }
+
+    func testUserDataDirForms() {
+        XCTAssertEqual(ProcessArguments.userDataDir(in: ["Claude", "--user-data-dir=/a/b/"]), "/a/b")
+        XCTAssertEqual(ProcessArguments.userDataDir(in: ["Claude", "--user-data-dir", "/a b"]), "/a b")
+        XCTAssertNil(ProcessArguments.userDataDir(in: ["Claude", "--lang=es"]))
+    }
+
+    func testSignInBackupAndRestore() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("ClatchBackup-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+        let profile = root.appendingPathComponent("Profile")
+        try fm.createDirectory(at: profile.appendingPathComponent("Network"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: profile.appendingPathComponent("Cache"), withIntermediateDirectories: true)
+        try "cookies".write(to: profile.appendingPathComponent("Network/Cookies"), atomically: true, encoding: .utf8)
+        try "{}".write(to: profile.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
+        try "big".write(to: profile.appendingPathComponent("Cache/data"), atomically: true, encoding: .utf8)
+        let id = UUID()
+        let backups = root.appendingPathComponent("Backups")
+
+        let snapshot = try XCTUnwrap(try SignInBackup.backUp([id: profile, UUID(): root.appendingPathComponent("never-started")],
+                                                             into: backups, reason: "test"))
+        XCTAssertEqual(snapshot.profiles, [id])
+        XCTAssertFalse(fm.fileExists(atPath: snapshot.folder.appendingPathComponent("\(id.uuidString)/Cache").path),
+                       "caches are not backed up")
+
+        try "lost".write(to: profile.appendingPathComponent("Network/Cookies"), atomically: true, encoding: .utf8)
+        try SignInBackup.restore(id, from: snapshot, into: profile)
+        XCTAssertEqual(try String(contentsOf: profile.appendingPathComponent("Network/Cookies"), encoding: .utf8), "cookies")
+        XCTAssertEqual(SignInBackup.list(in: backups).count, 1)
+    }
+}

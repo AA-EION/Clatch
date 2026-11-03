@@ -14,6 +14,45 @@ struct Preferences {
         static let hotKeyDisabled = "hotKeyDisabled"
         static let reopenClaude = "reopenClaudeAfterSwitch"
         static let shareToolSettings = "shareToolSettings"
+        static let sideBySide = "sideBySide"
+        static let profileShortcuts = "profileShortcuts"
+        static let routeSignIns = "routeSignIns"
+        static let watchdog = "watchdog"
+        static let checkForUpdates = "checkForUpdates"
+    }
+
+    private func bool(_ key: String, default value: Bool) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? value
+    }
+
+    /// Profiles run side by side (each its own Claude) instead of one at a time.
+    /// Off by default: one at a time keeps a single account active at a time.
+    var sideBySide: Bool {
+        get { bool(Key.sideBySide, default: false) }
+        nonmutating set { defaults.set(newValue, forKey: Key.sideBySide) }
+    }
+
+    /// A launcher per profile in ~/Applications/Clatch Profiles.
+    var profileShortcuts: Bool {
+        get { bool(Key.profileShortcuts, default: false) }
+        nonmutating set { defaults.set(newValue, forKey: Key.profileShortcuts) }
+    }
+
+    /// Side by side: send claude:// sign-ins to the profile that asked.
+    var routeSignIns: Bool {
+        get { bool(Key.routeSignIns, default: false) }
+        nonmutating set { defaults.set(newValue, forKey: Key.routeSignIns) }
+    }
+
+    /// Side by side: reopen profiles that Claude's own update closed.
+    var watchdog: Bool {
+        get { bool(Key.watchdog, default: true) }
+        nonmutating set { defaults.set(newValue, forKey: Key.watchdog) }
+    }
+
+    var checkForUpdates: Bool {
+        get { bool(Key.checkForUpdates, default: true) }
+        nonmutating set { defaults.set(newValue, forKey: Key.checkForUpdates) }
     }
 
     /// nil when the user turned the shortcut off.
