@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: GPL-3.0-or-later
+  Info.plist template; scripts/build-app.sh fills in the version numbers.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Clatch</string>
+    <key>CFBundleDisplayName</key>
+    <string>Clatch</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.issen.clatch</string>
+    <key>CFBundleExecutable</key>
+    <string>Clatch</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__CLATCH_VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__CLATCH_BUILD__</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 Issen Software Group. GNU GPL v3 or later.</string>
+    <!-- macOS 11 Big Sur: the first macOS that runs on Apple silicon. -->
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <!-- Menu bar only: no Dock icon, no app menu. -->
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- Idle menu bar agents may be quit by the system when memory is tight;
+         not while a switch is in progress (AppModel holds no unsaved state otherwise). -->
+    <key>NSSupportsAutomaticTermination</key>
+    <false/>
+    <key>NSSupportsSuddenTermination</key>
+    <false/>
+</dict>
+</plist>

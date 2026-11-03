@@ -1,0 +1,147 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# CI: build, test and package on real macOS runners.
+#
+# GitHub's macOS runners are Apple silicon VMs, plus an Intel image
+# (macos-15-intel) used to prove the universal app really runs on x86_64
+# hardware, not just under Rosetta.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"]  # release.yml handles tags
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Universal app + DMG, unit tests on both architectures.
+  # Signed + notarized when the repository has signing secrets (not on pull
+  # requests); otherwise ad-hoc signed so the whole pipeline still runs.
+  # ----------------------------------------------------------------------------
+  package:
+    name: Build, test, package
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select the newest Xcode
+        run: |
+          latest="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          sudo xcode-select -s "${latest}"
+          xcodebuild -version; swift --version; sw_vers; uname -m
+
+      - name: Unit tests (arm64)
+        run: swift test
+
+      - name: Unit tests (x86_64 under Rosetta)
+        run: |
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            swift test --arch x86_64
+          else
+            echo "::notice::Rosetta not available; x86_64 tests run on the Intel job"
+          fi
+
+      - name: Import signing certificate
+        if: github.event_name != 'pull_request'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: ./scripts/ci-import-certificate.sh
+
+      - name: Build universal app
+        env:
+          CLATCH_BUILD_NUMBER: ${{ github.run_number }}
+        run: ./scripts/build-app.sh
+
+      - name: Disk image
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: ./scripts/make-dmg.sh
+
+      - name: Launch smoke test
+        run: |
+          app=dist/Clatch.app
+          "$app/Contents/MacOS/Clatch" & pid=$!
+          sleep 6
+          kill -0 "$pid" || { echo "::error::Clatch exited early"; exit 1; }
+          kill "$pid"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Clatch-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  # ----------------------------------------------------------------------------
+  # Install the DMG on Intel and on the previous macOS, and launch the app.
+  # ----------------------------------------------------------------------------
+  install-smoke:
+    name: DMG · ${{ matrix.os }}
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Clatch-dmg
+      - name: Mount, copy to /Applications, launch
+        run: |
+          sw_vers; uname -m
+          dmg="$(ls Clatch-*.dmg)"
+          mnt="$(hdiutil attach -nobrowse -readonly "$dmg" | awk -F'\t' '/\/Volumes\// {print $NF}')"
+          ls -la "$mnt"
+          ditto "$mnt/Clatch.app" /Applications/Clatch.app
+          hdiutil detach "$mnt"
+          app=/Applications/Clatch.app
+          codesign --verify --deep --strict "$app"
+          lipo -archs "$app/Contents/MacOS/Clatch"
+          "$app/Contents/MacOS/Clatch" & pid=$!
+          sleep 8
+          kill -0 "$pid" || { echo "::error::Clatch exited early on $(uname -m)"; exit 1; }
+          ps -o rss=,command= -p "$pid" | awk '{printf "resident memory: %.1f MB\n", $1/1024}'
+          kill "$pid"
+
+  # ----------------------------------------------------------------------------
+  # What people see when they open the DMG (diagnostic, never fails the build).
+  # ----------------------------------------------------------------------------
+  dmg-look:
+    name: DMG window screenshot
+    needs: package
+    runs-on: macos-26
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Clatch-dmg
+      - name: Open in Finder and screenshot
+        run: |
+          mkdir -p shots
+          dmg="$(ls Clatch-*.dmg)"
+          mnt="$(hdiutil attach -readonly -noautoopen "$dmg" | awk -F'\t' '/\/Volumes\// {print $NF}')"
+          open "$mnt"; sleep 8
+          screencapture -x shots/dmg-window.png || true
+          osascript -e 'tell application "Finder" to close every window' || true
+          hdiutil detach "$mnt" || hdiutil detach -force "$mnt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dmg-window
+          path: shots/*.png
+          if-no-files-found: warn

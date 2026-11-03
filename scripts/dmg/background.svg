@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="400" viewBox="0 0 660 400">
+  <!-- DMG install window background. Icon centres: app (170,190), Applications (490,190). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBF4EF"/>
+      <stop offset="1" stop-color="#F1E2D8"/>
+    </linearGradient>
+  </defs>
+  <rect width="660" height="400" fill="url(#bg)"/>
+  <circle cx="170" cy="190" r="92" fill="#FFFFFF" fill-opacity="0.55" stroke="#E7CDBE" stroke-width="1"/>
+  <circle cx="490" cy="190" r="92" fill="#FFFFFF" fill-opacity="0.55" stroke="#E7CDBE" stroke-width="1"/>
+  <g fill="none" stroke="#C8603C" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M285 190 h86"/>
+    <path d="M352 168 l22 22 l-22 22"/>
+  </g>
+  <text x="330" y="345" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="17" fill="#5B3A2C">Drag Clatch to Applications to install</text>
+</svg>
