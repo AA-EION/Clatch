@@ -53,6 +53,34 @@ public partial class App : Application
         model.PanelRequested += () => ShowPanel(null);
         model.Changed += UpdateTooltip;
         model.Start();
+        RunCommandLine(Environment.GetCommandLineArgs());
+    }
+
+    /// <summary>
+    /// Automation: "Clatch.exe --add-account &lt;name&gt;" adds an account (as the
+    /// panel's Add Account does) and "Clatch.exe --switch-next" switches like the
+    /// keyboard shortcut. Sent to an already running Clatch, --switch-next is
+    /// forwarded to it.
+    /// </summary>
+    private void RunCommandLine(string[] args)
+    {
+        if (model is null) return;
+        for (var i = 1; i < args.Length; i++)
+        {
+            if (args[i].Equals("--add-account", StringComparison.OrdinalIgnoreCase))
+            {
+                var name = i + 1 < args.Length ? args[i + 1] : "";
+                Log.Write($"Command line: add account \"{name}\"");
+                model.AddAccount(name, null);
+                return;
+            }
+            if (args[i].Equals("--switch-next", StringComparison.OrdinalIgnoreCase))
+            {
+                Log.Write("Command line: switch to next account");
+                model.HotKeyPressed();
+                return;
+            }
+        }
     }
 
     private void UpdateTooltip()

@@ -25,7 +25,10 @@ public static class Program
         if (Marshal.GetLastPInvokeError() == Native.ERROR_ALREADY_EXISTS)
         {
             var existing = Native.FindWindowExW(0, 0, TrayIcon.WindowClass, null);
-            if (existing != 0) Native.PostMessageW(existing, TrayIcon.ShowPanelMessage, 0, 0);
+            // "--switch-next" from a script or shortcut switches; anything else shows the panel.
+            var message = Environment.GetCommandLineArgs().Contains("--switch-next", StringComparer.OrdinalIgnoreCase)
+                ? TrayIcon.SwitchNextMessage : TrayIcon.ShowPanelMessage;
+            if (existing != 0) Native.PostMessageW(existing, message, 0, 0);
             return 0;
         }
 

@@ -189,6 +189,20 @@ internal static unsafe partial class Native
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool GetProcessTimes(nint process, out FILETIME creation, out FILETIME exit, out FILETIME kernel, out FILETIME user);
 
+    // ---- Session-end messages (fallback way to ask an app to close) -------------
+
+    public const uint WM_QUERYENDSESSION = 0x0011, WM_ENDSESSION = 0x0016, ENDSESSION_CLOSEAPP = 0x1, SMTO_ABORTIFHUNG = 0x2;
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool EnumWindows(delegate* unmanaged<nint, nint, int> callback, nint parameter);
+
+    [LibraryImport("user32.dll")]
+    public static partial uint GetWindowThreadProcessId(nint hwnd, out uint processId);
+
+    [LibraryImport("user32.dll")]
+    public static partial nint SendMessageTimeoutW(nint hwnd, uint msg, nint wParam, nint lParam, uint flags, uint timeout, out nint result);
+
     // ---- Restart Manager: the Windows way to ask an app to close ---------------
 
     [StructLayout(LayoutKind.Sequential)]

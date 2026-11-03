@@ -454,8 +454,14 @@ internal sealed class FlyoutWindow : Window
         var actions = new StackPanel();
         actions.Children.Add(ActionRow("Show Accounts Folder", "", model.RevealAccountsFolder));
         actions.Children.Add(ActionRow("Open Claude", "", () => _ = model.Claude.OpenAsync(), model.Claude.IsInstalled));
-        actions.Children.Add(ActionRow("Clatch on GitHub", "", () => AppModel.OpenUri(AppModel.ProjectUri)));
+        actions.Children.Add(ActionRow("Open Log", "\uE9F9", model.OpenLog));
+        actions.Children.Add(ActionRow("Clatch on GitHub", "\uE943", () => AppModel.OpenUri(AppModel.ProjectUri)));
         root.Children.Add(actions);
+
+        // What Clatch detected, so a wrong guess is visible at a glance.
+        root.Children.Add(Caption(model.Claude.IsInstalled
+            ? $"Claude Desktop ({(model.Claude.IsPackaged ? "Microsoft Store / MSIX" : "installer")}). Data: {model.Claude.DataFolder}"
+            : "Claude Desktop not found."));
 
         root.Children.Add(new TextBlock
         {

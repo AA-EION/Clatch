@@ -163,6 +163,9 @@ jobs:
           name: windows-ui-screenshots
           path: windows/out/shots/*.png
           if-no-files-found: warn
+      - name: Real switch against a stand-in Claude (end-to-end)
+        shell: pwsh
+        run: ./windows/scripts/switch-test.ps1 -Exe windows/out/win-x64/Clatch.exe
       - name: Install with the installer, launch
         shell: pwsh
         run: |

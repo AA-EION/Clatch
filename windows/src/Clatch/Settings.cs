@@ -15,6 +15,8 @@ internal sealed class Settings
     public bool HotKeyDisabled { get; set; }
     public bool ReopenClaude { get; set; } = true;
     public bool ShareToolSettings { get; set; } = true;
+    /// <summary>Where Claude Desktop was last seen running, to find it again when it is closed.</summary>
+    public string? LastClaudeExecutable { get; set; }
 
     [JsonIgnore]
     public KeyCombo? EffectiveHotKey => HotKeyDisabled ? null : HotKey ?? KeyCombo.Default;

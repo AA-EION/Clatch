@@ -32,6 +32,8 @@ internal sealed unsafe class TrayIcon : IDisposable
     public const string WindowClass = "ClatchTrayWindow";
     /// <summary>Posted by a second Clatch instance: "show your panel".</summary>
     public const uint ShowPanelMessage = Native.WM_APP + 2;
+    /// <summary>Posted by "Clatch.exe --switch-next": same as the keyboard shortcut.</summary>
+    public const uint SwitchNextMessage = Native.WM_APP + 3;
     private const uint CallbackMessage = Native.WM_APP + 1;
     private const int HotKeyId = 1;
 
@@ -181,6 +183,11 @@ internal sealed unsafe class TrayIcon : IDisposable
                 return 0;
             }
             if (msg == Native.WM_HOTKEY && (int)wParam == HotKeyId)
+            {
+                tray.Post(() => tray.HotKeyPressed?.Invoke());
+                return 0;
+            }
+            if (msg == SwitchNextMessage)
             {
                 tray.Post(() => tray.HotKeyPressed?.Invoke());
                 return 0;

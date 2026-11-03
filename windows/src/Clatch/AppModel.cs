@@ -37,9 +37,10 @@ internal sealed class AppModel
     public static readonly Uri ProjectUri = new("https://github.com/AA-EION/Clatch");
 
     private readonly DispatcherQueue dispatcher;
-    private readonly AccountStore store;
+    private AccountStore store;
     private DispatcherQueueTimer? pollTimer;
     private bool claudeWasRunning;
+    private int lastLeftovers = -1;
     private DateTimeOffset phaseSince = DateTimeOffset.Now;
 
     public Settings Settings { get; }
@@ -66,8 +67,31 @@ internal sealed class AppModel
     {
         this.dispatcher = dispatcher;
         Settings = Settings.Load();
+        ClaudeInstall.LastSeenExecutable = Settings.LastClaudeExecutable;
         Claude = ClaudeInstall.Detect();
         store = new AccountStore(new ClatchPaths(Claude.DataFolder, Clatch.Settings.Folder), SharedItems);
+    }
+
+    /// <summary>Re-detects Claude and points the account store at the data folder in use.</summary>
+    private void RefreshClaude(string why)
+    {
+        Claude = ClaudeInstall.Detect();
+        if (!string.Equals(store.Paths.ClaudeData, Claude.DataFolder, StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Write($"Claude's data folder is now {Claude.DataFolder} (was {store.Paths.ClaudeData})");
+            store = new AccountStore(new ClatchPaths(Claude.DataFolder, Clatch.Settings.Folder), SharedItems);
+        }
+        else
+        {
+            store.Load();
+        }
+        if (ClaudeInstall.LastSeenExecutable is { } exe && exe != Settings.LastClaudeExecutable)
+        {
+            Settings.LastClaudeExecutable = exe;
+            Settings.Save();
+        }
+        Log.Write($"Claude ({why}): installed={Claude.IsInstalled} packaged={Claude.IsPackaged} via {Claude.How}; " +
+                  $"data={Claude.DataFolder} exists={Directory.Exists(Claude.DataFolder)}; family={Claude.PackageFamilyName ?? "-"}");
     }
 
     private IReadOnlyList<string> SharedItems => Settings.ShareToolSettings ? AccountStore.DefaultSharedItems : [];
@@ -81,8 +105,7 @@ internal sealed class AppModel
     public void PanelWillOpen()
     {
         if (Phase != Phase.Idle) return;
-        Claude = ClaudeInstall.Detect();
-        store.Load();
+        RefreshClaude("panel opened");
         FinishInterruptedSwitchIfPossible();
     }
 
@@ -157,9 +180,9 @@ internal sealed class AppModel
         if (IsBusy) return;
         ErrorMessage = null;
         Pending = operation;
-        Claude = ClaudeInstall.Detect();
-        store.Load();
+        RefreshClaude("switch requested");
         claudeWasRunning = Claude.IsRunning;
+        Log.Write($"Switch requested: {Describe(operation)}; active={State.Active?.Name}; Claude running={claudeWasRunning} [{Claude.DescribeRunning()}]");
         if (claudeWasRunning)
         {
             SetPhase(Phase.WaitingForClaude);
@@ -172,8 +195,16 @@ internal sealed class AppModel
         StartPolling();
     }
 
+    private string Describe(PendingOperation operation) => operation switch
+    {
+        PendingOperation.SwitchTo s => $"switch to {State.Accounts.FirstOrDefault(a => a.Id == s.Id)?.Name ?? s.Id.ToString()}",
+        PendingOperation.AddAccount a => $"add account \"{a.Name}\"",
+        _ => operation.ToString(),
+    };
+
     private void SetPhase(Phase phase)
     {
+        if (phase != Phase) Log.Write($"Phase {Phase} -> {phase}");
         Phase = phase;
         phaseSince = DateTimeOffset.Now;
         Notify();
@@ -186,9 +217,16 @@ internal sealed class AppModel
         var install = Claude;
         Task.Run(() =>
         {
-            bool agreed;
-            try { agreed = install.RequestQuit(); }
-            catch (Exception e) { Debug.WriteLine(e); agreed = false; }
+            int result;
+            try { result = install.RequestQuit(); }
+            catch (Exception e) { Log.Error("asking Claude to close", e); result = -1; }
+            Log.Write($"Asked Claude to close (Restart Manager): result={result}");
+            if (result != 0)
+            {
+                try { result = install.RequestQuitBySessionEnd() ? 0 : result; }
+                catch (Exception e) { Log.Error("session-end fallback", e); }
+            }
+            var agreed = result == 0;
             dispatcher.TryEnqueue(() =>
             {
                 if (!agreed && Phase == Phase.WaitingForClaude)
@@ -240,7 +278,9 @@ internal sealed class AppModel
             case Phase.WaitingForHelpers:
                 // Windows refuses to move a folder with open files, so wait until
                 // every Claude process is gone (plus a moment for disk flushes).
-                if (Claude.LeftoverProcessCount() == 0 && DateTimeOffset.Now - phaseSince > TimeSpan.FromMilliseconds(600))
+                var leftovers = Claude.LeftoverProcessCount();
+                if (leftovers != lastLeftovers) { Log.Write($"Claude processes still running: {leftovers}"); lastLeftovers = leftovers; }
+                if (leftovers == 0 && DateTimeOffset.Now - phaseSince > TimeSpan.FromMilliseconds(600))
                     Commit(layoutConfirmed: false);
                 break;
             default:
@@ -263,6 +303,7 @@ internal sealed class AppModel
             var check = DataLayoutCheck.Inspect(Claude.DataFolder, claudeWasRunning, Claude.AlternativeDataFolders());
             if (!check.IsRecognized)
             {
+                Log.Write("Data layout not recognized: " + string.Join(" | ", check.Problems));
                 LayoutProblems = check.Problems;
                 SetPhase(Phase.ConfirmLayout);
                 PanelRequested?.Invoke();
@@ -275,6 +316,7 @@ internal sealed class AppModel
         var openClaude = claudeWasRunning && Settings.ReopenClaude;
         try
         {
+            Log.Write($"Moving data: live={store.Paths.ClaudeData} (exists={Directory.Exists(store.Paths.ClaudeData)}), accounts={store.Paths.AccountsFolder}");
             store.RecoverInterruptedSwitch();
             switch (operation)
             {
@@ -288,9 +330,11 @@ internal sealed class AppModel
                     break;
             }
             ErrorMessage = null;
+            Log.Write($"Switched: active={State.Active?.Name}; live folder exists={Directory.Exists(store.Paths.ClaudeData)}");
         }
         catch (Exception e)
         {
+            Log.Error("switching", e);
             ErrorMessage = e.Message;
             openClaude = claudeWasRunning; // Nothing switched: give Claude back.
         }
@@ -326,6 +370,12 @@ internal sealed class AppModel
     public static void OpenUri(Uri uri)
     {
         try { Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }); }
+        catch (Exception e) { Debug.WriteLine(e); }
+    }
+
+    public void OpenLog()
+    {
+        try { Process.Start(new ProcessStartInfo(Log.FilePath) { UseShellExecute = true }); }
         catch (Exception e) { Debug.WriteLine(e); }
     }
 
