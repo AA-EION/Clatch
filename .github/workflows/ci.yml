@@ -184,6 +184,49 @@ jobs:
           if-no-files-found: error
 
   # ----------------------------------------------------------------------------
+  # Windows on ARM: install with the real installer (which picks the ARM64
+  # build) and run the panel test and the end-to-end switch test natively.
+  # ----------------------------------------------------------------------------
+  windows-arm:
+    name: Windows ARM64 · install, panel, switch
+    needs: windows
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: Clatch-windows
+          path: setup
+      - name: Install (per user, no admin)
+        shell: pwsh
+        run: |
+          $env:PROCESSOR_ARCHITECTURE
+          $setup = Get-ChildItem setup/Clatch-*-windows-setup.exe | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=' -Wait
+          $exe = "$env:LOCALAPPDATA\Programs\Clatch\Clatch.exe"
+          if (-not (Test-Path $exe)) { throw "not installed at $exe" }
+          # The installed binary must be the native ARM64 one (PE machine 0xAA64).
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $pe + 4)
+          "Clatch.exe machine: 0x{0:X4}" -f $machine
+          if ($machine -ne 0xAA64) { throw 'the installer did not install the ARM64 build' }
+          Get-Process Clatch -ErrorAction SilentlyContinue | Stop-Process -Force
+      - name: Panel and menu open from the icon
+        shell: pwsh
+        run: ./windows/scripts/ui-smoke.ps1 -Exe "$env:LOCALAPPDATA\Programs\Clatch\Clatch.exe" -Shots shots
+      - name: Real switch against a stand-in Claude
+        shell: pwsh
+        run: ./windows/scripts/switch-test.ps1 -Exe "$env:LOCALAPPDATA\Programs\Clatch\Clatch.exe"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-arm-screenshots
+          path: shots/*.png
+          if-no-files-found: warn
+
+  # ----------------------------------------------------------------------------
   # What people see when they open the DMG (diagnostic, never fails the build).
   # ----------------------------------------------------------------------------
   dmg-look:
