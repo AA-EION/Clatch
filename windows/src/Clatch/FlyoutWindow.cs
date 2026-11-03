@@ -64,6 +64,7 @@ internal sealed class FlyoutWindow : Window
             host.Background = ThemeBrush("SolidBackgroundFillColorBaseBrush");
         host.PreviewKeyDown += OnKeyDown; // tunnelling: seen before any button reacts
         Content = host;
+        root.SizeChanged += (_, e) => FitToContent(e.NewSize.Height);
 
         model.Changed += Render;
         Activated += (_, e) =>
@@ -119,18 +120,26 @@ internal sealed class FlyoutWindow : Window
         AppWindow.MoveAndResize(new RectInt32(x, y, width, height));
     }
 
-    private void Resize()
+    /// <summary>
+    /// Fits the window to the content's real laid-out height. Called whenever
+    /// the content's size changes: the measurement taken before the window is
+    /// shown is only an estimate (fonts and theme resources are not applied
+    /// yet), so relying on it alone cut the bottom of the panel off.
+    /// </summary>
+    private void FitToContent(double contentHeight)
     {
-        if (closed) return;
-        root.Measure(new Windows.Foundation.Size(PanelWidth, double.PositiveInfinity));
+        if (closed || contentHeight <= 0) return;
         var scale = Scale;
         var position = AppWindow.Position;
         var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
-        var height = (int)Math.Min(Math.Ceiling((root.DesiredSize.Height + 4) * scale), area.Height - 24);
-        var bottom = AppWindow.Position.Y + AppWindow.Size.Height;
+        // + a few pixels for the window border.
+        var height = (int)Math.Min(Math.Ceiling((contentHeight + 6) * scale), area.Height - 24);
+        if (Math.Abs(height - AppWindow.Size.Height) <= 1) return;
+        var bottom = position.Y + AppWindow.Size.Height;
         // Keep the edge nearest the taskbar in place.
-        var y = position.Y > area.Y + area.Height / 2 - AppWindow.Size.Height ? bottom - height : position.Y;
-        y = Math.Clamp(y, area.Y + 12, area.Y + area.Height - height - 12);
+        var anchoredToBottom = bottom > area.Y + area.Height / 2;
+        var y = anchoredToBottom ? bottom - height : position.Y;
+        y = Math.Clamp(y, area.Y + 12, Math.Max(area.Y + 12, area.Y + area.Height - height - 12));
         AppWindow.MoveAndResize(new RectInt32(position.X, y, AppWindow.Size.Width, height));
     }
 
@@ -148,7 +157,6 @@ internal sealed class FlyoutWindow : Window
             case Page.Settings: RenderSettings(); break;
             default: RenderAccounts(); break;
         }
-        DispatcherQueue.TryEnqueue(Resize);
     }
 
     private void RenderAccounts()
