@@ -248,7 +248,7 @@ internal sealed class FlyoutWindow : Window
             Content = grid, HorizontalAlignment = HorizontalAlignment.Stretch,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0),
-            Padding = new Thickness(10, 8, 6, 8), IsEnabled = !isActive && !model.IsBusy,
+            Padding = new Thickness(10, 8, 6, 8), IsEnabled = !model.IsBusy, // the active row stays readable; clicking it does nothing
         };
         ToolTipService.SetToolTip(select, isActive ? "Signed in to Claude now" : $"Switch Claude to {account.Name}");
         select.Click += (_, _) => model.SwitchTo(account.Id);
@@ -300,8 +300,9 @@ internal sealed class FlyoutWindow : Window
         var add = new Button
         {
             Content = "Add Another Account…", HorizontalAlignment = HorizontalAlignment.Stretch,
-            Style = ThemeStyle("AccentButtonStyle"), IsEnabled = !model.IsBusy,
+            IsEnabled = !model.IsBusy,
         };
+        MakeAccent(add);
         add.Click += (_, _) => model.ShowPage(Page.AddAccount);
         panel.Children.Add(add);
         return Card(panel, new Thickness(12), 8, AccentColor());
@@ -522,6 +523,18 @@ internal sealed class FlyoutWindow : Window
             ? brush
             : new SolidColorBrush(Color.FromArgb(24, 128, 128, 128));
 
+    /// <summary>Gives a button the accent look, with or without the theme style.</summary>
+    private static void MakeAccent(Button button)
+    {
+        if (ThemeStyle("AccentButtonStyle") is { } style)
+        {
+            button.Style = style;
+            return;
+        }
+        button.Background = new SolidColorBrush(AccentColor());
+        button.Foreground = new SolidColorBrush(Colors.White);
+    }
+
     /// <summary>A theme style, or null to keep the control's default look.</summary>
     private static Style? ThemeStyle(string key) =>
         Application.Current.Resources.TryGetValue(key, out var value) ? value as Style : null;
@@ -662,8 +675,8 @@ internal sealed class FlyoutWindow : Window
         var right = new Button
         {
             Content = primary.Title, HorizontalAlignment = HorizontalAlignment.Stretch,
-            Style = ThemeStyle("AccentButtonStyle"),
         };
+        MakeAccent(right);
         right.Click += (_, _) => primary.Action();
         Grid.SetColumn(right, 1);
         grid.Children.Add(left);
