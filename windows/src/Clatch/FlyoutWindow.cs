@@ -292,7 +292,7 @@ internal sealed class FlyoutWindow : Window
         var add = new Button
         {
             Content = "Add Another Account…", HorizontalAlignment = HorizontalAlignment.Stretch,
-            Style = (Style)Application.Current.Resources["AccentButtonStyle"], IsEnabled = !model.IsBusy,
+            Style = ThemeStyle("AccentButtonStyle"), IsEnabled = !model.IsBusy,
         };
         add.Click += (_, _) => model.ShowPage(Page.AddAccount);
         panel.Children.Add(add);
@@ -508,9 +508,23 @@ internal sealed class FlyoutWindow : Window
 
     // ---- Building blocks ----------------------------------------------------------
 
-    private static Brush ThemeBrush(string key) => (Brush)Application.Current.Resources[key];
+    /// <summary>A theme brush; never throws (falls back to a neutral translucent brush).</summary>
+    private static Brush ThemeBrush(string key) =>
+        Application.Current.Resources.TryGetValue(key, out var value) && value is Brush brush
+            ? brush
+            : new SolidColorBrush(Color.FromArgb(24, 128, 128, 128));
 
-    private static Color AccentColor() => (Color)Application.Current.Resources["SystemAccentColor"];
+    /// <summary>A theme style, or null to keep the control's default look.</summary>
+    private static Style? ThemeStyle(string key) =>
+        Application.Current.Resources.TryGetValue(key, out var value) ? value as Style : null;
+
+    /// <summary>The user's Windows accent colour, straight from the system settings
+    /// (unboxing the theme resource fails in the NativeAOT build).</summary>
+    private static Color AccentColor()
+    {
+        try { return new Windows.UI.ViewManagement.UISettings().GetColorValue(Windows.UI.ViewManagement.UIColorType.Accent); }
+        catch (Exception) { return Color.FromArgb(255, 0, 120, 212); }
+    }
 
     private static Color AccountColor(Guid id)
     {
@@ -640,7 +654,7 @@ internal sealed class FlyoutWindow : Window
         var right = new Button
         {
             Content = primary.Title, HorizontalAlignment = HorizontalAlignment.Stretch,
-            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
+            Style = ThemeStyle("AccentButtonStyle"),
         };
         right.Click += (_, _) => primary.Action();
         Grid.SetColumn(right, 1);
