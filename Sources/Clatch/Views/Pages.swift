@@ -174,11 +174,11 @@ struct SettingsPage: View {
             .glassSurface()
 
             VStack(alignment: .leading, spacing: 8) {
-                Toggle("Reopen Claude after switching", isOn: binding(\.reopenClaude))
-                Toggle("Same MCP & tool settings for every account", isOn: binding(\.shareToolSettings))
+                Toggle("Reopen Claude after switching", isOn: $model.reopenClaude)
+                Toggle("Same MCP & tool settings for every account", isOn: $model.shareToolSettings)
                     .help("Copies claude_desktop_config.json to the account you switch to.")
                 if LoginItem.isSupported {
-                    Toggle("Open Clatch at login", isOn: binding(\.openAtLogin))
+                    Toggle("Open Clatch at login", isOn: $model.openAtLogin)
                 }
             }
             .toggleStyle(SwitchToggleStyle())
@@ -209,10 +209,6 @@ struct SettingsPage: View {
         case .conflictsWithSystem: return "macOS already uses this shortcut. Choose a different one."
         case .active, .off: return nil
         }
-    }
-
-    private func binding(_ keyPath: ReferenceWritableKeyPath<AppModel, Bool>) -> Binding<Bool> {
-        Binding(get: { model[keyPath: keyPath] }, set: { model[keyPath: keyPath] = $0 })
     }
 
     private func startRecording() {
