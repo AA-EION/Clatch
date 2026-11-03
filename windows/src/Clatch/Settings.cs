@@ -15,6 +15,20 @@ internal sealed class Settings
     public bool HotKeyDisabled { get; set; }
     public bool ReopenClaude { get; set; } = true;
     public bool ShareToolSettings { get; set; } = true;
+    /// <summary>Profiles run side by side (each its own Claude). Off by default: one account active at a time.</summary>
+    public bool SideBySide { get; set; }
+    /// <summary>"Claude - profile" shortcuts on the Desktop and in the Start menu.</summary>
+    public bool ProfileShortcuts { get; set; }
+    /// <summary>Side by side: claude:// sign-ins go to the profile that asked.</summary>
+    public bool RouteSignIns { get; set; }
+    /// <summary>Side by side: reopen profiles that Claude's own update closed.</summary>
+    public bool Watchdog { get; set; } = true;
+    /// <summary>Side by side: each profile's windows get their own taskbar button and icon.</summary>
+    public bool SeparateTaskbarButtons { get; set; } = true;
+    public bool CheckForUpdates { get; set; } = true;
+    public DateTimeOffset? LastUpdateCheck { get; set; }
+    /// <summary>Claude's own claude:// command, restored when routing is turned off.</summary>
+    public string? ClaudeLinkCommandBackup { get; set; }
     /// <summary>Where Claude Desktop was last seen running, to find it again when it is closed.</summary>
     public string? LastClaudeExecutable { get; set; }
     /// <summary>Claude's data folder as last read from its --user-data-dir.</summary>
@@ -75,4 +89,5 @@ internal static class StartAtLogin
 
 [JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(Settings))]
+[JsonSerializable(typeof(Dictionary<Guid, List<string>>))]
 internal sealed partial class AppJsonContext : JsonSerializerContext;

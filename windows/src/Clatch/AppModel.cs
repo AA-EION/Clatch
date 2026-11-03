@@ -17,9 +17,11 @@ internal enum Phase
     /// <summary>Claude's data folder looks different from what Clatch expects. Nothing moved yet.</summary>
     ConfirmLayout,
     Switching,
+    /// <summary>Turning side by side off: waiting for the other profiles' Claudes to close.</summary>
+    ClosingProfiles,
 }
 
-internal enum Page { Accounts, AddAccount, Rename, ConfirmRemove, Settings }
+internal enum Page { Accounts, AddAccount, EditProfile, ConfirmRemove, Settings, ConfirmSideBySide, MoveChats, RestoreBackups }
 
 internal abstract record PendingOperation
 {
@@ -35,6 +37,7 @@ internal sealed class AppModel
 {
     public static readonly Uri DonateUri = new("https://www.paypal.com/donate/?business=juanesgtgt2%40gmail.com&no_recurring=0&item_name=Issen+Software+Group");
     public static readonly Uri ProjectUri = new("https://github.com/AA-EION/Clatch");
+    public static readonly Uri TermsUri = new("https://www.anthropic.com/legal/consumer-terms");
 
     private readonly DispatcherQueue dispatcher;
     private AccountStore store;
@@ -59,6 +62,19 @@ internal sealed class AppModel
     public Page Page { get; set; } = Page.Accounts;
     public Guid? PageAccount { get; set; }
     public bool HotKeyRegistered { get; private set; } = true;
+    /// <summary>A short, non-error message ("Chat copied", "Backup restored").</summary>
+    public string? Notice { get; set; }
+    public UpdateChecker.Update? AvailableUpdate { get; private set; }
+    public ProfileRuntime Runtime { get; }
+    public LinkRouter Router { get; }
+    public bool SideBySide => Settings.SideBySide;
+    /// <summary>Show the switcher (the App owns the window).</summary>
+    public event Action? SwitcherRequested;
+    /// <summary>Links waiting for a profile's Claude to start.</summary>
+    private readonly Dictionary<Guid, string> pendingLinks = [];
+    /// <summary>Watchdog: Claude's version when each unexpected exit happened.</summary>
+    private readonly Dictionary<Guid, (string? Version, DateTimeOffset Since)> watchedExits = [];
+    private DispatcherQueueTimer? watchdogTimer;
 
     /// <summary>Anything changed: the open panel redraws.</summary>
     public event Action? Changed;
@@ -75,10 +91,31 @@ internal sealed class AppModel
         ClaudeInstall.LastSeenDataFolder = Settings.LastClaudeDataFolder;
         Claude = ClaudeInstall.Detect();
         store = new AccountStore(PathsFor(Claude), SharedItems);
+        Runtime = new ProfileRuntime(dispatcher, () => Claude, ProfileFor);
+        Router = new LinkRouter(Settings);
     }
 
+    /// <summary>Profiles live directly under %LOCALAPPDATA% (Cowork only finds them there).</summary>
     private static ClatchPaths PathsFor(ClaudeInstall claude) =>
-        new(claude.DataFolder, Clatch.Settings.Folder, claude.ExtraDataFolders);
+        new(claude.DataFolder, Clatch.Settings.Folder, claude.ExtraDataFolders,
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+
+    private static string Normalize(string path) => Path.GetFullPath(path).TrimEnd('\\');
+
+    /// <summary>Which profile a running Claude belongs to, from its data folder (null: Claude's default).</summary>
+    private Guid? ProfileFor(string? dataFolder)
+    {
+        if (dataFolder is null) return State.ActiveId;
+        string wanted;
+        try { wanted = Normalize(dataFolder); } catch (Exception) { return null; }
+        foreach (var account in State.Accounts)
+            if (string.Equals(Normalize(store.DataFolder(account.Id)), wanted, StringComparison.OrdinalIgnoreCase)) return account.Id;
+        return null;
+    }
+
+    public bool IsRunning(Guid id) => Runtime.IsRunning(id);
+    public Account? Account(Guid id) => State.Accounts.FirstOrDefault(a => a.Id == id);
+    public string IconPath(Account account) => ProfileIcons.Png(account, Claude.Executable);
 
     /// <summary>Re-detects Claude and points the account store at the data folder in use.</summary>
     private void RefreshClaude(string why)
@@ -111,13 +148,31 @@ internal sealed class AppModel
     {
         HotKeyRegistered = RegisterHotKey?.Invoke(Settings.EffectiveHotKey) ?? false;
         FinishInterruptedSwitchIfPossible();
+        if (!Claude.IsRunning)
+        {
+            var moved = store.MigrateLegacyProfiles();
+            if (moved.Count > 0) Log.Write($"Moved {moved.Count} profile folder(s) directly under %LOCALAPPDATA%");
+        }
+        Runtime.Changed += RuntimeChanged;
+        Runtime.UnexpectedExit += WatchUnexpectedExit;
+        Runtime.WindowShown += ApplyTaskbarIdentity;
+        Runtime.Start();
+        SyncShortcuts();
+        // Routing hygiene: claude:// must reach Claude whenever routing is off.
+        if (Settings.RouteSignIns && SideBySide) Router.Enable();
+        else if (LinkRouter.IsHandler()) Router.Disable();
+        CheckForUpdates();
+        Log.Write($"Mode: {(SideBySide ? "side by side" : "one at a time")}; {State.Accounts.Count} profile(s)");
     }
 
     public void PanelWillOpen()
     {
+        Notice = null;
+        CheckForUpdates();
         if (Phase != Phase.Idle) return;
         RefreshClaude("panel opened");
         FinishInterruptedSwitchIfPossible();
+        Runtime.Rescan();
     }
 
     public void PanelDidClose()
@@ -149,9 +204,21 @@ internal sealed class AppModel
 
     // ---- Editing --------------------------------------------------------------
 
-    public void Rename(Guid id, string name) { Try(() => store.Rename(id, name)); ShowPage(Page.Accounts); }
+    public void Update(Account account) { Try(() => store.Update(account)); SyncShortcuts(); ShowPage(Page.Accounts); }
     public void Move(Guid id, int offset) => Try(() => store.Move(id, offset));
-    public void Remove(Guid id) { Try(() => store.Remove(id, Interop.Native.SendToRecycleBin)); ShowPage(Page.Accounts); }
+
+    public void Remove(Guid id)
+    {
+        if (IsRunning(id))
+        {
+            ErrorMessage = "Close this profile's Claude first.";
+            ShowPage(Page.Accounts);
+            return;
+        }
+        Try(() => store.Remove(id, Interop.Native.SendToRecycleBin));
+        SyncShortcuts();
+        ShowPage(Page.Accounts);
+    }
     public string SuggestedNewName() => store.SuggestedNewName();
     public bool HasStoredData(Guid id) => store.HasStoredData(id);
     public string AccountsFolder => store.Paths.ClatchRoot;
@@ -167,14 +234,68 @@ internal sealed class AppModel
 
     public bool IsBusy => Phase != Phase.Idle;
 
-    public void SwitchTo(Guid id)
+    /// <summary>
+    /// The main action for a profile (the menu, the switcher, a shortcut).
+    /// One at a time: switch Claude to it. Side by side: bring its Claude to the front, or start it.
+    /// </summary>
+    public void Open(Guid id)
     {
-        if (id != State.ActiveId) Begin(new PendingOperation.SwitchTo(id));
+        if (Account(id) is not { } account) return;
+        if (SideBySide) _ = Launch(account);
+        else if (id == State.ActiveId) _ = Launch(account);
+        else Begin(new PendingOperation.SwitchTo(id));
     }
+
+    private async Task Launch(Account account, bool activate = true)
+    {
+        var folder = account.Id == State.ActiveId ? null : store.DataFolder(account.Id);
+        if (!HasSignIn(account.Id) && Settings.RouteSignIns) Router.ExpectSignIn(account.Id);
+        var problem = await Runtime.LaunchOrFocus(account, folder, activate);
+        if (problem is not null) { ErrorMessage = problem; Notify(); }
+        store.MarkUsed(account.Id);
+    }
+
+    private bool HasSignIn(Guid id)
+    {
+        var folder = store.DataFolder(id);
+        return File.Exists(Path.Combine(folder, "Network", "Cookies")) || File.Exists(Path.Combine(folder, "Cookies"));
+    }
+
+    public void CloseProfile(Guid id) => Runtime.Close(id);
+
+    public void RestartProfile(Guid id)
+    {
+        if (Account(id) is not { } account) return;
+        if (!IsRunning(id)) { Open(id); return; }
+        Runtime.Close(id, () =>
+        {
+            var timer = dispatcher.CreateTimer();
+            timer.Interval = TimeSpan.FromMilliseconds(500);
+            timer.IsRepeating = false;
+            timer.Tick += (_, _) => _ = Launch(account);
+            timer.Start();
+        });
+    }
+
+    public void SwitchTo(Guid id) => Open(id);
 
     public void AddAccount(string name, string? renameCurrentTo)
     {
         Page = Page.Accounts;
+        if (SideBySide)
+        {
+            Account? created = null;
+            Try(() =>
+            {
+                if (renameCurrentTo is { } rename && State.ActiveId is { } current) store.Rename(current, rename);
+                created = store.CreateProfile(name);
+            });
+            if (created is null) return;
+            Router.ExpectSignIn(created.Id);
+            SyncShortcuts();
+            _ = Launch(created);
+            return;
+        }
         Begin(new PendingOperation.AddAccount(name, renameCurrentTo));
     }
 
@@ -182,8 +303,277 @@ internal sealed class AppModel
     {
         if (IsBusy) return;
         store.Load();
-        if (State.Next is { } next) SwitchTo(next.Id);
+        if (State.Accounts.Count > 1) SwitcherRequested?.Invoke();
         else PanelRequested?.Invoke();
+    }
+
+    /// <summary>The profile the switcher starts from (it highlights the next one).</summary>
+    public Guid? CurrentForSwitcher() => SideBySide ? Runtime.LastActive ?? State.ActiveId : State.ActiveId;
+
+    private void RuntimeChanged()
+    {
+        foreach (var (id, link) in pendingLinks.ToList())
+        {
+            if (!IsRunning(id)) continue;
+            pendingLinks.Remove(id);
+            var timer = dispatcher.CreateTimer();
+            timer.Interval = TimeSpan.FromSeconds(2);
+            timer.IsRepeating = false;
+            timer.Tick += (_, _) => DeliverLink(id, link);
+            timer.Start();
+        }
+        Notify();
+    }
+
+    // ---- Links (shortcuts and claude:// routing) -----------------------------------
+
+    /// <summary>Arguments from the command line or forwarded by a second Clatch.exe.</summary>
+    public void RunCommand(string[] args)
+    {
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i].ToLowerInvariant())
+            {
+                case "--launch" when i + 1 < args.Length && Guid.TryParse(args[i + 1], out var id):
+                    Log.Write("A profile shortcut was opened");
+                    Open(id);
+                    return;
+                case "--open-link" when i + 1 < args.Length:
+                    HandleLink(args[i + 1]);
+                    return;
+                case "--add-account":
+                    var name = i + 1 < args.Length ? args[i + 1] : "";
+                    Log.Write($"Command line: add account \"{name}\"");
+                    AddAccount(name, null);
+                    return;
+                case "--switch-next":
+                    Log.Write("Command line: switch to next account");
+                    store.Load();
+                    if (State.Next is { } next) Open(next.Id);
+                    return;
+            }
+        }
+        PanelRequested?.Invoke();
+    }
+
+    private void HandleLink(string link)
+    {
+        if (!ClaudeLink.IsClaudeLink(link)) return;
+        var target = SideBySide && Settings.RouteSignIns ? Router.Target(link, Runtime.LastActive, State.ActiveId) : State.ActiveId;
+        if (target is not { } id || Account(id) is not { } account)
+        {
+            Log.Write($"Passing {ClaudeLink.Describe(link)} to Claude");
+            Runtime.SendLink(link, null);
+            return;
+        }
+        Log.Write($"Routing {ClaudeLink.Describe(link)} to a profile");
+        if (ClaudeLink.IsSignIn(link)) Router.ClearPending();
+        if (IsRunning(id)) DeliverLink(id, link);
+        else
+        {
+            pendingLinks[id] = link;
+            _ = Launch(account);
+        }
+    }
+
+    private void DeliverLink(Guid id, string link)
+    {
+        var problem = Runtime.SendLink(link, store.DataFolder(id));
+        if (problem is not null) { ErrorMessage = problem; Notify(); }
+    }
+
+    public void SetRouting(bool on)
+    {
+        Settings.RouteSignIns = on && SideBySide;
+        Settings.Save();
+        try
+        {
+            if (Settings.RouteSignIns) Router.Enable(); else Router.Disable();
+            if (Settings.RouteSignIns && LinkRouter.ChoiceOverridesClatch())
+                Notice = "Windows uses the app you once chose for claude:// links. Choose Clatch for claude in Settings › Apps › Default apps (button below).";
+        }
+        catch (Exception e) { ErrorMessage = e.Message; }
+        Notify();
+    }
+
+    public static void OpenDefaultAppsSettings() =>
+        OpenUri(new Uri("ms-settings:defaultapps?registeredAppUser=Clatch"));
+
+    // ---- Taskbar identity ----------------------------------------------------------------
+
+    private void ApplyTaskbarIdentity(Guid id, nint hwnd)
+    {
+        if (!SideBySide || !Settings.SeparateTaskbarButtons || Account(id) is not { } account) return;
+        string icon;
+        try { icon = ProfileIcons.Ico(account, Claude.Executable); } catch (Exception) { return; }
+        var exe = Environment.ProcessPath!;
+        Interop.Shell.SetWindowIdentity(hwnd, ProfileShortcuts.AppUserModelId(id), $"\"{exe}\" --launch {id:D}",
+                                        $"Claude - {account.Name}", $"{icon},0");
+    }
+
+    // ---- Modes ------------------------------------------------------------------------
+
+    public void RequestSideBySide(bool on)
+    {
+        if (on == SideBySide) return;
+        if (on) ShowPage(Page.ConfirmSideBySide);
+        else TurnSideBySideOff();
+    }
+
+    public void ConfirmSideBySide()
+    {
+        BackUpSignIns("Turning side by side on");
+        Settings.SideBySide = true;
+        Settings.Save();
+        Runtime.Rescan();
+        Log.Write("Side by side turned on");
+        ShowPage(Page.Settings);
+    }
+
+    /// <summary>Closes every other profile's Claude politely, backs up the sign-ins, then
+    /// goes back to one at a time. Every profile keeps its folder: nothing has to be signed in again.</summary>
+    private void TurnSideBySideOff()
+    {
+        void Finish()
+        {
+            BackUpSignIns("Turning side by side off");
+            Settings.SideBySide = false;
+            Settings.Save();
+            if (Settings.RouteSignIns) SetRouting(false);
+            Log.Write("Side by side turned off");
+            SetPhase(Phase.Idle);
+        }
+        Guid[] keep = State.ActiveId is { } active ? [active] : [];
+        if (Runtime.Instances.Keys.All(keep.Contains)) { Finish(); return; }
+        SetPhase(Phase.ClosingProfiles);
+        Page = Page.Accounts;
+        Runtime.CloseAll(keep, Finish);
+    }
+
+    public string BackupsFolder => Path.Combine(store.Paths.ClatchRoot, "Backups");
+
+    public void BackUpSignIns(string reason)
+    {
+        var folders = State.Accounts.Where(a => !IsRunning(a.Id)).ToDictionary(a => a.Id, a => store.DataFolder(a.Id));
+        try
+        {
+            if (SignInBackup.BackUp(folders, BackupsFolder, reason) is { } snapshot)
+                Log.Write($"Backed up the sign-ins of {snapshot.Profiles.Count} profile(s): {reason}");
+        }
+        catch (Exception e) { Log.Error("backing up sign-ins", e); }
+    }
+
+    public List<SignInBackup.Snapshot> Backups() => SignInBackup.List(BackupsFolder);
+
+    public void Restore(SignInBackup.Snapshot snapshot)
+    {
+        int restored = 0, skipped = 0;
+        foreach (var id in snapshot.Profiles.Where(id => Account(id) is not null))
+        {
+            if (IsRunning(id)) { skipped++; continue; }
+            try { SignInBackup.Restore(id, snapshot, store.DataFolder(id)); restored++; }
+            catch (Exception e) { ErrorMessage = e.Message; }
+        }
+        Notice = $"Restored {restored} profile(s)." + (skipped > 0 ? $" {skipped} skipped because their Claude is open: close it and restore again." : "");
+        ShowPage(Page.Accounts);
+    }
+
+    // ---- Code-tab chats ---------------------------------------------------------------
+
+    /// <summary>A profile's session roots (the Store version may redirect part of them into its LocalCache).</summary>
+    private IEnumerable<string> SessionRoots(Guid id)
+    {
+        var folder = store.DataFolder(id);
+        yield return Path.Combine(folder, CodeSessions.FolderName);
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData).TrimEnd('\\') + "\\";
+        if (Claude.IsPackaged && Claude.PackageFolder is { } package && folder.StartsWith(local, StringComparison.OrdinalIgnoreCase))
+            yield return Path.Combine(package, "LocalCache", "Local", folder[local.Length..], CodeSessions.FolderName);
+    }
+
+    public List<CodeSession> CodeSessionsOf(Guid id) => CodeSessions.Discover(SessionRoots(id));
+
+    public void CopySession(CodeSession session, Guid target)
+    {
+        if (Account(target) is not { } account) return;
+        try
+        {
+            CodeSessions.Copy(session, SessionRoots(target), account.Name);
+            Notice = $"Copied “{session.Title}” to {account.Name}." + (IsRunning(target) ? " Restart its Claude to see it." : "");
+            ErrorMessage = null;
+        }
+        catch (Exception e) { ErrorMessage = e.Message; }
+        Notify();
+    }
+
+    // ---- Watchdog ---------------------------------------------------------------------
+
+    /// <summary>A profile's Claude ended on its own. If Claude got updated meanwhile, reopen it on the new version.</summary>
+    private void WatchUnexpectedExit(Guid id)
+    {
+        if (!SideBySide || !Settings.Watchdog) return;
+        watchedExits[id] = (ClaudeInstall.InstalledVersion(), DateTimeOffset.Now);
+        if (watchdogTimer is not null) return;
+        watchdogTimer = dispatcher.CreateTimer();
+        watchdogTimer.Interval = TimeSpan.FromSeconds(3);
+        watchdogTimer.Tick += (_, _) => CheckWatchedExits();
+        watchdogTimer.Start();
+    }
+
+    private void CheckWatchedExits()
+    {
+        var now = DateTimeOffset.Now;
+        var current = ClaudeInstall.InstalledVersion();
+        foreach (var (id, exit) in watchedExits.ToList())
+        {
+            if (IsRunning(id) || now - exit.Since > TimeSpan.FromMinutes(3)) { watchedExits.Remove(id); continue; }
+            if (current is null || current == exit.Version || now - exit.Since < TimeSpan.FromSeconds(6) || Account(id) is not { } account) continue;
+            Log.Write($"Claude was updated to {current}; reopening a profile it closed");
+            watchedExits.Remove(id);
+            RefreshClaude("after a Claude update");
+            _ = Launch(account, activate: false);
+        }
+        if (watchedExits.Count == 0) { watchdogTimer?.Stop(); watchdogTimer = null; }
+    }
+
+    // ---- Shortcuts and updates -----------------------------------------------------------
+
+    public void SyncShortcuts()
+    {
+        try { ProfileShortcuts.Sync(State.Accounts, Settings.ProfileShortcuts, Claude.Executable); }
+        catch (Exception e) { Log.Error("updating the profile shortcuts", e); }
+    }
+
+    public void SetProfileShortcuts(bool value) { Settings.ProfileShortcuts = value; Settings.Save(); SyncShortcuts(); }
+    public void SetWatchdog(bool value) { Settings.Watchdog = value; Settings.Save(); }
+    public void SetSeparateTaskbarButtons(bool value) { Settings.SeparateTaskbarButtons = value; Settings.Save(); }
+    public void SetCheckForUpdates(bool value) { Settings.CheckForUpdates = value; Settings.Save(); }
+
+    public void CheckForUpdates(bool force = false)
+    {
+        if (!force && (!Settings.CheckForUpdates || !UpdateChecker.IsDue(Settings))) return;
+        var version = Version;
+        Task.Run(async () =>
+        {
+            try
+            {
+                var update = await UpdateChecker.CheckAsync(version);
+                dispatcher.TryEnqueue(() =>
+                {
+                    Settings.LastUpdateCheck = DateTimeOffset.Now;
+                    Settings.Save();
+                    AvailableUpdate = update;
+                    if (force && update is null) Notice = "Clatch is up to date.";
+                    Notify();
+                });
+            }
+            catch (Exception e)
+            {
+                dispatcher.TryEnqueue(() =>
+                {
+                    if (force) { ErrorMessage = $"Could not check for updates: {e.Message}"; Notify(); }
+                });
+            }
+        });
     }
 
     private void Begin(PendingOperation operation)
@@ -299,11 +689,17 @@ internal sealed class AppModel
     {
         generation++;
         StopPolling();
+        if (Phase == Phase.ClosingProfiles)
+        {
+            Runtime.CancelClosing();
+            SetPhase(Phase.Idle);
+            return;
+        }
         var reopen = claudeWasRunning && Phase is Phase.WaitingForHelpers or Phase.ConfirmLayout;
         Pending = null;
         QuitDeclined = false;
         SetPhase(Phase.Idle);
-        if (reopen && !Claude.IsRunning) _ = Claude.OpenAsync();
+        if (reopen && !Claude.IsRunning && State.Active is { } active) _ = Launch(active);
     }
 
     public void ContinueDespiteLayout()
@@ -435,7 +831,9 @@ internal sealed class AppModel
         }
         Pending = null;
         LayoutProblems = [];
-        if (openClaude) _ = Claude.OpenAsync();
+        Runtime.Rescan();
+        SyncShortcuts();
+        if (openClaude && State.Active is { } nowActive) _ = Launch(nowActive);
         SetPhase(Phase.Idle);
     }
 
@@ -481,6 +879,15 @@ internal sealed class AppModel
         catch (Exception e) { Debug.WriteLine(e); }
     }
 
-    public static string Version =>
-        typeof(AppModel).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "dev";
+    /// <summary>The version, with a prerelease suffix if this build is one (from the informational version).</summary>
+    public static string Version
+    {
+        get
+        {
+            var info = typeof(AppModel).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+                .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion;
+            if (info is not null) return info.Split('+')[0];
+            return typeof(AppModel).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "dev";
+        }
+    }
 }

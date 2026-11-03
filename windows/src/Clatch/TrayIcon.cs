@@ -50,6 +50,11 @@ internal sealed unsafe class TrayIcon : IDisposable
     /// <summary>Right click: show the context menu at this point.</summary>
     public event Action<Native.POINT>? RightClicked;
     public event Action? HotKeyPressed;
+    /// <summary>One of the temporary shortcuts registered while the switcher is open (its index).</summary>
+    public event Action<int>? ExtraHotKeyPressed;
+    /// <summary>Arguments forwarded by a second Clatch.exe (a shortcut, a claude:// link, a script).</summary>
+    public event Action<string[]>? CommandReceived;
+    private int extraCount;
 
     public TrayIcon(DispatcherQueue dispatcher, string iconPath, string tooltip)
     {
@@ -153,6 +158,35 @@ internal sealed unsafe class TrayIcon : IDisposable
         return ok;
     }
 
+    /// <summary>Registers short-lived extra shortcuts (ids 100+); ones that fail are skipped.</summary>
+    public void RegisterExtras(IReadOnlyList<KeyCombo> combos)
+    {
+        UnregisterExtras();
+        for (var i = 0; i < combos.Count; i++)
+            Native.RegisterHotKey(hwnd, 100 + i, combos[i].Modifiers | Native.MOD_NOREPEAT, combos[i].VirtualKey);
+        extraCount = combos.Count;
+    }
+
+    public void UnregisterExtras()
+    {
+        for (var i = 0; i < extraCount; i++) Native.UnregisterHotKey(hwnd, 100 + i);
+        extraCount = 0;
+    }
+
+    /// <summary>The window a second Clatch.exe sends its arguments to (WM_COPYDATA).</summary>
+    public const uint WM_COPYDATA = 0x004A;
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    public struct COPYDATASTRUCT
+    {
+        public nint dwData;
+        public uint cbData;
+        public nint lpData;
+    }
+
+    /// <summary>Marks the argument messages Clatch understands.</summary>
+    public const nint CommandMagic = 0x434C5443; // 'CLTC'
+
     // ---- Messages -------------------------------------------------------------
 
     private void Post(Action action) => dispatcher.TryEnqueue(() =>
@@ -186,6 +220,23 @@ internal sealed unsafe class TrayIcon : IDisposable
             {
                 tray.Post(() => tray.HotKeyPressed?.Invoke());
                 return 0;
+            }
+            if (msg == Native.WM_HOTKEY && (int)wParam >= 100)
+            {
+                var index = (int)wParam - 100;
+                tray.Post(() => tray.ExtraHotKeyPressed?.Invoke(index));
+                return 0;
+            }
+            if (msg == WM_COPYDATA && lParam != 0)
+            {
+                var data = (COPYDATASTRUCT*)lParam;
+                if (data->dwData == CommandMagic && data->cbData < 64 * 1024)
+                {
+                    var text = new string((char*)data->lpData, 0, (int)data->cbData / 2);
+                    var args = text.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+                    tray.Post(() => tray.CommandReceived?.Invoke(args));
+                    return 1;
+                }
             }
             if (msg == SwitchNextMessage)
             {

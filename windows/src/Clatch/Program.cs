@@ -16,7 +16,7 @@ namespace Clatch;
 public static class Program
 {
     [STAThread]
-    public static int Main()
+    public static unsafe int Main()
     {
         WinRT.ComWrappersSupport.InitializeComWrappers();
 
@@ -25,10 +25,24 @@ public static class Program
         if (Marshal.GetLastPInvokeError() == Native.ERROR_ALREADY_EXISTS)
         {
             var existing = Native.FindWindowExW(0, 0, TrayIcon.WindowClass, null);
-            // "--switch-next" from a script or shortcut switches; anything else shows the panel.
-            var message = Environment.GetCommandLineArgs().Contains("--switch-next", StringComparer.OrdinalIgnoreCase)
-                ? TrayIcon.SwitchNextMessage : TrayIcon.ShowPanelMessage;
-            if (existing != 0) Native.PostMessageW(existing, message, 0, 0);
+            // Hand the arguments (a profile shortcut, a claude:// link, a script) to the running Clatch.
+            var args = Environment.GetCommandLineArgs().Skip(1).ToArray();
+            if (existing != 0)
+            {
+                if (args.Length == 0)
+                {
+                    Native.PostMessageW(existing, TrayIcon.ShowPanelMessage, 0, 0);
+                }
+                else
+                {
+                    var text = string.Join('\0', args);
+                    fixed (char* chars = text)
+                    {
+                        var data = new TrayIcon.COPYDATASTRUCT { dwData = TrayIcon.CommandMagic, cbData = (uint)(text.Length * 2), lpData = (nint)chars };
+                        Native.SendMessageTimeoutW(existing, TrayIcon.WM_COPYDATA, 0, (nint)(&data), Native.SMTO_ABORTIFHUNG, 5000, out _);
+                    }
+                }
+            }
             return 0;
         }
 

@@ -381,6 +381,13 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
 
     public bool IsRunning => MainProcesses().Count > 0;
 
+    /// <summary>Whether one process belongs to Claude Desktop (for window events of unknown processes).</summary>
+    public bool IsClaudeProcessId(uint pid)
+    {
+        var (path, family) = Identify(pid);
+        return IsClaudeProcess(new ProcessInfo(pid, 0, path, family));
+    }
+
     /// <summary>Every running Claude Desktop process (for the log).</summary>
     public string DescribeRunning()
     {
@@ -413,6 +420,76 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
         return tree.ToList();
     }
 
+    /// <summary>A running Claude: its main process, its whole process tree, and the
+    /// data folder it was started with (null: it gave none, i.e. Claude's default).</summary>
+    public sealed record RunningClaude(uint MainPid, IReadOnlyList<uint> Tree, string? DataFolder);
+
+    /// <summary>
+    /// Every running Claude Desktop with the data folder it uses, read from its
+    /// processes' command lines (Electron passes --user-data-dir to every helper).
+    /// </summary>
+    public List<RunningClaude> RunningInstances()
+    {
+        var all = Snapshot(withPaths: true);
+        var byParent = all.ToLookup(p => p.ParentPid);
+        var claudePids = all.Where(IsClaudeProcess).Select(p => p.Pid).ToHashSet();
+        var result = new List<RunningClaude>();
+        foreach (var main in all.Where(p => claudePids.Contains(p.Pid) && !claudePids.Contains(p.ParentPid)
+                                            && p.Path is { } path
+                                            && System.IO.Path.GetFileName(path).Equals("claude.exe", StringComparison.OrdinalIgnoreCase)))
+        {
+            var tree = new List<uint> { main.Pid };
+            for (var i = 0; i < tree.Count; i++)
+                foreach (var child in byParent[tree[i]])
+                    if (!tree.Contains(child.Pid)) tree.Add(child.Pid);
+            string? folder = null;
+            foreach (var pid in tree.Where(claudePids.Contains))
+            {
+                folder = ClaudeCommandLine.UserDataDir(CommandLineOf(pid));
+                if (folder is not null) break;
+            }
+            result.Add(new RunningClaude(main.Pid, tree, folder));
+        }
+        return result;
+    }
+
+    /// <summary>The executable to start profiles with (side by side, or with flags).</summary>
+    public string? Executable
+    {
+        get
+        {
+            if (IsPackaged && PackageRoot is not null)
+            {
+                var exe = Path.Combine(PackageRoot, "app", "Claude.exe");
+                if (File.Exists(exe)) return exe;
+            }
+            if (LauncherPath is not null && File.Exists(LauncherPath)) return LauncherPath;
+            return LastSeenExecutable is { } last && File.Exists(last) ? last : null;
+        }
+    }
+
+    /// <summary>Claude's installed version (the watchdog compares it before and after a Claude quits on its own).</summary>
+    public static string? InstalledVersion()
+    {
+        try
+        {
+            // A package installs into Claude_<version>_<arch>__<publisher>.
+            if (FindPackageUncached() is { } package)
+            {
+                var parts = Path.GetFileName(package.InstallFolder).Split('_');
+                if (parts.Length > 1) return parts[1];
+            }
+            // The classic installer keeps one app-<version> folder per version.
+            var classic = Path.Combine(LocalAppData, "AnthropicClaude");
+            if (Directory.Exists(classic))
+                return Directory.GetDirectories(classic, "app-*").Select(Path.GetFileName)
+                    .OrderByDescending(v => AppVersion.Parse(v?["app-".Length..]), Comparer<AppVersion?>.Create((a, b) => a is null ? (b is null ? 0 : -1) : a.CompareTo(b)))
+                    .FirstOrDefault();
+        }
+        catch (Exception) { }
+        return null;
+    }
+
     /// <summary>Processes running an executable stored inside Claude's data folders.</summary>
     public int DataFolderProcessCount()
     {
@@ -437,9 +514,13 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
     /// shuts down, and is allowed to refuse. Never forced.
     /// </summary>
     /// <returns>The Restart Manager result (0 when Claude agreed to close).</returns>
-    public unsafe int RequestQuit()
+    public int RequestQuit() => RequestQuit(null);
+
+    /// <param name="only">Only these main processes (one profile's Claude); null: every Claude.</param>
+    public unsafe int RequestQuit(IReadOnlyCollection<uint>? only)
     {
         var mains = MainProcesses();
+        if (only is not null) mains = mains.Where(m => only.Contains(m.Pid)).ToList();
         if (mains.Count == 0) return 0;
         var key = stackalloc char[33];
         var status = Native.RmStartSession(out var session, 0, key);
@@ -481,9 +562,9 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
     /// Claude may refuse via WM_QUERYENDSESSION; then nothing else is sent.
     /// </summary>
     /// <returns>true when every window agreed.</returns>
-    public bool RequestQuitBySessionEnd()
+    public bool RequestQuitBySessionEnd(IReadOnlyCollection<uint>? only = null)
     {
-        var pids = MainProcesses().Select(p => p.Pid).ToHashSet();
+        var pids = MainProcesses().Select(p => p.Pid).Where(p => only is null || only.Contains(p)).ToHashSet();
         if (pids.Count == 0) return true;
         var windows = WindowsOf(pids);
         Log.Write($"Session-end fallback: {windows.Count} window(s) of Claude");
@@ -508,7 +589,7 @@ internal sealed record ClaudeInstall(bool IsInstalled, bool IsPackaged, string D
     private static HashSet<uint>? enumPids;
     private static List<nint>? enumResult;
 
-    private static unsafe List<nint> WindowsOf(HashSet<uint> pids)
+    internal static unsafe List<nint> WindowsOf(HashSet<uint> pids)
     {
         lock (EnumGate)
         {

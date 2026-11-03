@@ -165,3 +165,55 @@ public sealed class ProfileFeatureTests : IDisposable
         Assert.Throws<CodeSessionException>(() => CodeSessions.Copy(fix, targetRoots, "B"));
     }
 }
+
+public sealed class SignInBackupTests : IDisposable
+{
+    private readonly string root = Path.Combine(Path.GetTempPath(), "ClatchBackup-" + Guid.NewGuid().ToString("N"));
+
+    public SignInBackupTests() => Directory.CreateDirectory(root);
+
+    public void Dispose()
+    {
+        try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+    }
+
+    [Fact]
+    public void BacksUpOnlyTheSignInAndRestoresIt()
+    {
+        var profile = Path.Combine(root, "Profile");
+        Directory.CreateDirectory(Path.Combine(profile, "Network"));
+        Directory.CreateDirectory(Path.Combine(profile, "Cache"));
+        Directory.CreateDirectory(Path.Combine(profile, "Local Storage", "leveldb"));
+        File.WriteAllText(Path.Combine(profile, "Network", "Cookies"), "cookies");
+        File.WriteAllText(Path.Combine(profile, "Local Storage", "leveldb", "000003.log"), "ls");
+        File.WriteAllText(Path.Combine(profile, "Cache", "data"), "big");
+        var id = Guid.NewGuid();
+        var backups = Path.Combine(root, "Backups");
+
+        var snapshot = SignInBackup.BackUp(new Dictionary<Guid, string> { [id] = profile, [Guid.NewGuid()] = Path.Combine(root, "never") }, backups, "test");
+        Assert.NotNull(snapshot);
+        Assert.Equal([id], snapshot!.Profiles);
+        Assert.False(Directory.Exists(Path.Combine(snapshot.Folder, id.ToString("D"), "Cache")));
+
+        File.WriteAllText(Path.Combine(profile, "Network", "Cookies"), "lost");
+        SignInBackup.Restore(id, snapshot, profile);
+        Assert.Equal("cookies", File.ReadAllText(Path.Combine(profile, "Network", "Cookies")));
+        Assert.Equal("ls", File.ReadAllText(Path.Combine(profile, "Local Storage", "leveldb", "000003.log")));
+        Assert.Single(SignInBackup.List(backups));
+    }
+
+    [Fact]
+    public void KeepsTheNewestThree()
+    {
+        var profile = Path.Combine(root, "P");
+        Directory.CreateDirectory(profile);
+        File.WriteAllText(Path.Combine(profile, "config.json"), "{}");
+        var backups = Path.Combine(root, "Backups");
+        for (var i = 0; i < 5; i++)
+        {
+            SignInBackup.BackUp(new Dictionary<Guid, string> { [Guid.NewGuid()] = profile }, backups, $"n{i}");
+            Thread.Sleep(20);
+        }
+        Assert.Equal(SignInBackup.Kept, SignInBackup.List(backups).Count);
+    }
+}
