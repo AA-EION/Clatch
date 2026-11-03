@@ -83,6 +83,13 @@ if [[ ${embedded} -eq 1 ]]; then
     codesign --remove-signature "${lib}" 2>/dev/null || true
   done
 fi
+# Absolute rpaths into the build machine's Xcode are meaningless on a user's Mac.
+while read -r rpath; do
+  case "${rpath}" in
+    /usr/lib/*|@*) ;;
+    *) install_name_tool -delete_rpath "${rpath}" "${APP}/Contents/MacOS/Clatch" ;;
+  esac
+done < <(otool -l "${APP}/Contents/MacOS/Clatch" | awk '/cmd LC_RPATH/ {getline; getline; print $2}' | sort -u)
 otool -l "${APP}/Contents/MacOS/Clatch" | awk '/cmd LC_RPATH/ {getline; getline; print "  rpath " $2}'
 
 if [[ -n "${SIGN_IDENTITY}" ]]; then
