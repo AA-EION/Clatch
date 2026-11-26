@@ -203,7 +203,7 @@ final class AppModel {
 
     func openActiveClaude() {
         if let active = state.active { launch(active) }
-        else { try? Claude.start(dataFolder: nil, activationToken: takeToken()) }
+        else { try? Claude.start(dataFolder: nil, activationToken: takeToken(), newInstance: true) }
     }
 
     private func hasSignIn(_ id: UUID) -> Bool {

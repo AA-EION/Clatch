@@ -171,10 +171,12 @@ enum Claude {
     /// data folder, with extra arguments and environment variables. If a Claude
     /// already runs on that folder, it hands the arguments over and exits:
     /// that brings the window forward, or delivers a link.
+    /// `newInstance`: a Claude is really starting (not handing over to a running one).
     static func start(dataFolder: URL?, arguments: [String] = [], environment: [String: String] = [:],
-                      activationToken: String? = nil) throws {
+                      activationToken: String? = nil, newInstance: Bool = false) throws {
         guard let exe = executable else { throw ClaudeError.notInstalled }
-        var argv = [exe]
+        var argv = newInstance ? appScope() : []
+        argv.append(exe)
         if let dataFolder { argv.append("--user-data-dir=\(dataFolder.path)") }
         argv += arguments
         var env = ProcessInfo.processInfo.environment
@@ -187,6 +189,24 @@ enum Claude {
             env["DESKTOP_STARTUP_ID"] = nil
         }
         try spawnDetached(argv, environment: env)
+    }
+
+    /// Starts a new Claude the way the desktop does: in its own systemd scope
+    /// named after its app ID (app-<launcher>-<app id>-<random>.scope, the
+    /// convention desktops and xdg-desktop-portal use). That is how the portal
+    /// knows the process is Claude: GNOME then remembers the answer to Claude's
+    /// own shortcut request (its Ctrl+Alt+Space Quick Entry) instead of asking
+    /// again each time Clatch starts it. Without a systemd user session Claude
+    /// starts as a plain child process.
+    private static func appScope() -> [String] {
+        let runtime = ProcessInfo.processInfo.environment["XDG_RUNTIME_DIR"] ?? "/run/user/\(getuid())"
+        guard FileManager.default.fileExists(atPath: "\(runtime)/systemd/private"),
+              let systemdRun = (["/usr/bin/systemd-run", "/bin/systemd-run"] as [String]).first(where: { access($0, X_OK) == 0 })
+        else { return [] }
+        let appID = desktopEntry.replacingOccurrences(of: ".desktop", with: "")
+        let random = String(UInt64.random(in: 1...UInt64.max), radix: 16)
+        return [systemdRun, "--user", "--scope", "--quiet", "--collect",
+                "--unit=app-clatch-\(appID)-\(random).scope", "--"]
     }
 
     /// g_spawn_async without DO_NOT_REAP: GLib double-forks, so no zombie is left;

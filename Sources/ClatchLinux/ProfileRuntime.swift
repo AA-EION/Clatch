@@ -119,7 +119,7 @@ final class ProfileRuntime {
         let arguments = problems.isEmpty ? account.arguments : []
         if let folder = dataFolder { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
         try Claude.start(dataFolder: dataFolder, arguments: arguments, environment: account.environment,
-                         activationToken: activationToken)
+                         activationToken: activationToken, newInstance: true)
         Log.write("Started Claude for a profile\(dataFolder == nil ? " (Claude's own folder)" : "")")
         scheduleRescan(after: 1)
     }

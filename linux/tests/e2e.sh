@@ -13,6 +13,7 @@ CLAUDE=/usr/lib/claude-desktop/claude-desktop
 WORK=$(mktemp -d)
 export GDK_BACKEND=x11 GSK_RENDERER=cairo NO_AT_BRIDGE=1 GTK_A11Y=none
 unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME
+REAL_RUNTIME_DIR=${XDG_RUNTIME_DIR:-}
 
 fail() { echo "FAIL: $*"; echo "---- clatch log"; cat "$HOME/.local/state/Clatch/clatch.log" 2>/dev/null || true; exit 1; }
 wait_for() { # wait_for "<description>" <command...>
@@ -36,9 +37,13 @@ new_home() {
     gone "^$CLATCH" || pkill -KILL -f "^$CLATCH" || true
     sleep 0.5
     export HOME="$WORK/$1"
-    export XDG_RUNTIME_DIR="$WORK/$1-run"
-    mkdir -p "$HOME/.config/Claude" "$XDG_RUNTIME_DIR"
-    chmod 700 "$XDG_RUNTIME_DIR"
+    # The real runtime folder when there is one (it holds the systemd user session's socket).
+    if [ -z "${REAL_RUNTIME_DIR:-}" ] || [ ! -d "$REAL_RUNTIME_DIR" ]; then
+        export XDG_RUNTIME_DIR="$WORK/$1-run"
+        mkdir -p "$XDG_RUNTIME_DIR"
+        chmod 700 "$XDG_RUNTIME_DIR"
+    fi
+    mkdir -p "$HOME/.config/Claude"
     echo '{}' > "$HOME/.config/Claude/config.json"
     echo '{}' > "$HOME/.config/Claude/Local State"
     printf alice > "$HOME/.config/Claude/Cookies"
@@ -61,6 +66,14 @@ wait_for "Claude to reopen for Bob" lock_pid "$C"
 [ ! -e "$C/Cookies" ] || fail "Claude's folder should be fresh for the new account"
 grep -q "marking readyForQuit" "$HOME/.config/Clatch/Accounts"/*/Claude/logs/main.log || fail "Claude was not asked politely"
 echo "ok 1a: add account closed Claude politely, parked alice, reopened Claude"
+
+# Where there is a systemd user session, a Claude that Clatch starts runs in its own app scope, so
+# the desktop's portal knows it is Claude (and remembers its shortcut permission).
+if [ -S "$XDG_RUNTIME_DIR/systemd/private" ] && command -v systemd-run >/dev/null; then
+    grep -q "app-clatch-com.anthropic.Claude-[0-9a-f]*\.scope" "/proc/$(lock_pid "$C")/cgroup" \
+        || fail "Claude was not started in its app scope: $(cat /proc/$(lock_pid "$C")/cgroup)"
+    echo "ok 1a+: Clatch starts Claude in its own app scope"
+fi
 
 # The tray icon, used the way a desktop's tray uses it: it offers no menu of its own
 # (so desktops don't show a generic one), and a click opens Clatch's window.
@@ -167,7 +180,9 @@ if [ -f /usr/share/applications/com.issensoftware.Clatch.desktop ]; then
     grep -q "test-code" "$HOME/.local/state/Clatch/clatch.log" && fail "a sign-in code was written to the log"
     echo "ok 3c: a sign-in reaches the profile that is waiting for one (and is not logged)"
 
-    "$CLATCH" --quit; sleep 0.5
+    "$CLATCH" --quit
+    # A Clatch still exiting would receive the next start's arguments (single instance per session).
+    wait_for "Clatch to exit" gone "^$CLATCH"
     # Off again (as Settings does): Claude gets its handler back at the next start.
     echo '{"sideBySide": true, "routeSignIns": false}' > "$HOME/.config/Clatch/settings.json"
     start_clatch --background
