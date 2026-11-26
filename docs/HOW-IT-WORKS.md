@@ -213,3 +213,43 @@ lives in Claude Code's own history, which every profile on the computer shares. 
 copies that file into the other profile, under the account and organisation that profile used most
 recently, so the chat shows up there and can carry on. The target profile must have opened the
 Code tab once. Chats on claude.ai live on Anthropic's servers and are not touched.
+
+## Linux
+
+Claude Desktop for Linux (Anthropic's beta, installed from its apt repository to
+`/usr/lib/claude-desktop`) is the same Electron app. What Clatch relies on was read from the
+package itself and confirmed on a real installation:
+
+| | Linux |
+|---|---|
+| Data folder | `~/.config/Claude` (`$XDG_CONFIG_HOME/Claude`); `Claude-3p` in third-party mode |
+| Encryption key | One Secret Service entry (GNOME Keyring or KWallet) with `application: Claude`, shared by every data folder, as the Keychain item is on macOS; switching never touches it |
+| Running instance | Chromium's single-instance lock in the data folder: `SingletonLock` → `<hostname>-<pid>`, removed when Claude closes. Clatch watches each profile's folder for it (inotify through GIO) and follows each main process with a pidfd: no polling |
+| Which process is whose | Each helper carries `--user-data-dir=<folder>`; the crash reporter (`--database=<folder>/Crashpad`) is not a child of Claude; Claude Code runs from `<folder>/claude-code`; the rest are descendants of the main process |
+| Closing politely | Electron runs Claude's normal quit on SIGTERM, SIGHUP and SIGINT, so Claude can ask the user first ("Claude is still working") and may be told no. Each signal works **once**: Electron restores the default action afterwards, so a second SIGTERM would kill Claude. **Ask Claude Again** uses the next signal |
+| Knowing it agreed | Claude's own log (`<folder>/logs`) says `marking readyForQuit` once it has saved everything. Only then, if processes are still around a few seconds later, does Clatch end them. Without that line it never forces anything |
+| Side by side | `--user-data-dir=<folder>`; Claude doesn't refuse it (it refuses debugging switches only) and ignores `CLAUDE_USER_DATA_DIR` in signed builds. Starting Claude again on a running profile's folder hands the arguments to that instance and exits: that brings it forward and delivers links |
+| Cowork | A QEMU/KVM virtual machine run by `cowork-linux-helper` on one socket per user (`$XDG_RUNTIME_DIR/claude-cowork-vm.sock`), so side by side only one profile can use Cowork at a time |
+| `claude://` links | Claude's desktop entry `com.anthropic.Claude.desktop` handles `x-scheme-handler/claude`, and Claude makes itself the default again each time it starts if it isn't. With routing on, Clatch sets itself as the default in `~/.config/mimeapps.list`, watches that file and takes the default back, and restores Claude's when routing is turned off |
+| Updates | Through apt only; the package is replaced under a running Claude. Clatch notices (`app.asar` changes), offers to restart open profiles, and the watchdog reopens profiles that ended after an update |
+
+Clatch for Linux is a GTK 4 / libadwaita app written in Swift against the C API, using the same
+`ClatchCore` as the Mac app (journaled renames, the fail-safe, backups, Code chats). Pieces specific
+to Linux:
+
+- **One instance.** A `GApplication`: a second `clatch` (a profile launcher, a `claude://` link, the
+  GNOME shortcut) hands its arguments to the running one over D-Bus and exits.
+- **Main loop.** GLib's loop also runs Swift's main queue, through libdispatch's run-loop hooks (an
+  eventfd), so `@MainActor` code works without polling.
+- **Tray.** A StatusNotifierItem with a dbusmenu menu, implemented over GDBus (libappindicator is
+  GTK 3 only). KDE, Ubuntu's GNOME, Xfce, Cinnamon, MATE and others show it.
+- **Shortcut.** The GlobalShortcuts portal (GNOME 48+, KDE 5.27+), which reports both press and
+  release; on older GNOME a custom keyboard shortcut (written through GSettings) that runs
+  `clatch --switcher`.
+- **Switcher.** Wayland lets no app place its own windows, so the switcher is a transparent
+  full-screen window with the card in the middle. With the keyboard, releasing the modifiers commits;
+  without it, the portal's release event or a short pause does.
+- **Launchers.** `.desktop` files (`clatch --launch <id>`) in `~/.local/share/applications` and on the
+  Desktop (marked trusted for GNOME), with icons drawn with cairo and pango.
+- **Trash.** Removing a profile follows the freedesktop.org Trash specification, so the file manager
+  can restore it.

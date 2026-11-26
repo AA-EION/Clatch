@@ -5,7 +5,7 @@
 <h1 align="center">Clatch</h1>
 
 <p align="center">
-  <b>Switch between Claude Desktop accounts from the menu bar (macOS) or the notification area (Windows).</b><br>
+  <b>Switch between Claude Desktop accounts from the menu bar (macOS) or the notification area (Windows and Linux).</b><br>
   One click or one shortcut. No signing out and back in again.
 </p>
 
@@ -35,11 +35,14 @@ its own sign-in and its own local data.
   Lives in the **menu bar** only, no Dock icon.
 - **Windows**: x64 and ARM64, **Windows 10 (1809) and 11**. A WinUI 3 app with **Acrylic**.
   Lives in the **notification area** only, no taskbar button.
+- **Linux**: amd64 and arm64, for **Claude Desktop for Linux** (Anthropic's beta for Ubuntu 22.04+ and
+  Debian 12+). A GTK 4 / libadwaita app that lives in the **notification area** where the desktop
+  has one (KDE Plasma, Ubuntu's GNOME, Xfce, Cinnamon…), on Wayland and X11.
 - **Two ways to run your accounts.** *One at a time* (the default): one Claude, and Clatch swaps
   the account. *Side by side*: each account gets its own Claude window, and several can be open
   at once. Every account keeps its sign-in in both modes.
 - **A profile switcher like ⌘Tab / Alt+Tab**: hold **⌃⌥⌘** and tap **C** on macOS
-  (**Ctrl+Alt+Win** and **C** on Windows) to move through your profiles, let go to open the
+  (**Ctrl+Alt+Win** and **C** on Windows, **Ctrl+Alt+Super** and **C** on Linux) to move through your profiles, let go to open the
   highlighted one. You can change the shortcut.
 - **A shortcut for every profile**: launchers in `~/Applications/Clatch Profiles` on macOS, Desktop
   and Start menu shortcuts on Windows, each with Claude's icon and the profile's own badge. Once turned on,
@@ -87,19 +90,38 @@ its own sign-in and its own local data.
 > **Test builds** aren't code-signed yet, so SmartScreen may say "Windows protected your PC".
 > Click **More info › Run anyway**.
 
+### Linux
+
+1. Download **Clatch-…-linux-amd64.deb** (Intel/AMD) or **Clatch-…-linux-arm64.deb** from the
+   [Releases page](https://github.com/AA-EION/Clatch/releases).
+2. Install it with your software installer, or in a terminal:
+
+   ```bash
+   sudo apt install ./Clatch-*-linux-*.deb
+   ```
+
+3. Open **Clatch** from your apps. Its icon appears in the notification area where your desktop has
+   one. **Plain GNOME** (Fedora, Debian) has no notification area unless you add the
+   *AppIndicator and KStatusNotifierItem Support* extension (Ubuntu ships it); without it, open
+   Clatch from the app grid or with its shortcut.
+
+The package is built on Ubuntu 22.04 and works on 22.04 and later and on Debian 12 and later, the
+systems Claude Desktop for Linux supports.
+
 ### Updating
 
 Quit Clatch (menu bar icon › **Quit Clatch**), download the new .dmg and replace the app in
-Applications. Your accounts stay as they are.
+Applications. Your accounts stay as they are. On Windows run the new installer; on Linux install the
+new .deb the same way as the first.
 
 ### Uninstalling
 
 1. In Clatch, switch to the account you want to keep using in Claude.
 2. **macOS**: quit Clatch and drag it to the Trash. **Windows**: *Settings › Apps › Installed apps ›
-   Clatch › Uninstall*.
+   Clatch › Uninstall*. **Linux**: quit Clatch, then `sudo apt remove clatch`.
 3. Optional: delete Clatch's folder, which holds the other accounts' saved sign-ins
    (**Settings › Show Accounts Folder** opens it): `~/Library/Application Support/Clatch` on macOS,
-   `%LOCALAPPDATA%\Clatch` on Windows.
+   `%LOCALAPPDATA%\Clatch` on Windows, `~/.config/Clatch` on Linux.
 
 ---
 
@@ -109,7 +131,7 @@ Applications. Your accounts stay as they are.
 
 At first Clatch knows one account: the one signed in to Claude right now ("Account 1").
 
-1. Click the Clatch icon (menu bar on macOS, notification area on Windows), then
+1. Click the Clatch icon (menu bar on macOS, notification area on Windows and Linux), then
    **Add Another Account…**.
 2. Give both accounts a name (your email address works well), then click **Quit Claude & Add**.
 3. Claude quits. If a local session is running, Claude asks whether to quit; choose **Quit**.
@@ -121,8 +143,8 @@ That's it. Both accounts now show up in the Clatch menu.
 
 ### Switching
 
-- **Click** an account in the Clatch menu, press **⌘1…⌘9** (macOS) or **Ctrl+1…Ctrl+9** (Windows)
-  while the menu is open, or
+- **Click** an account in the Clatch menu, press **⌘1…⌘9** (macOS) or **Ctrl+1…Ctrl+9** (Windows,
+  Linux) while Clatch's window is open, or
 - use the **profile switcher** (below), or
 - open a profile's **shortcut** (below).
 
@@ -133,11 +155,16 @@ On Windows, Claude is asked to close the same way Windows asks apps to close whe
 so Claude can still ask you first. If it doesn't close, quit it from its own notification area
 icon; Clatch carries on by itself.
 
+On Linux, Clatch asks Claude to quit the way the desktop does when you log out, so Claude can ask you
+first here too. If you say no, **Ask Claude Again** asks once more (up to three times). Once Claude has
+agreed and saved everything, Clatch makes sure nothing of it is left running; it never forces a Claude
+that hasn't agreed.
+
 ### The profile switcher
 
-Press **⌃⌥⌘C** (macOS) or **Ctrl+Alt+Win+C** (Windows) and keep holding the modifier keys. A
-floating panel (Liquid Glass on macOS 26+, Acrylic on Windows) shows your profiles with the next
-one highlighted.
+Press **⌃⌥⌘C** (macOS), **Ctrl+Alt+Win+C** (Windows) or **Ctrl+Alt+Super+C** (Linux) and keep
+holding the modifier keys. A floating panel (Liquid Glass on macOS 26+, Acrylic on Windows, libadwaita
+on Linux) shows your profiles with the next one highlighted.
 
 - Tap **C** again to move forward; **Shift+C** or **←** moves back, **→** forward.
 - **Let go** of the modifier keys to open the highlighted profile. **Return/Enter** opens it at once,
@@ -147,6 +174,15 @@ What "open" means depends on the mode: *one at a time* switches Claude to that a
 side* brings that profile's Claude to the front, or starts it. While the switcher is open Clatch
 reads the state of the modifier keys; nothing is watched once it closes. No accessibility or input
 monitoring permission is needed.
+
+On Linux, apps can't grab keys themselves (especially on Wayland), so Clatch asks the desktop:
+
+- **GNOME 48 and later, KDE Plasma 5.27 and later** (and other desktops with the *GlobalShortcuts*
+  portal): the desktop asks you once to confirm the shortcut, and you can change it there.
+- **Older GNOME** (Ubuntu 22.04 and 24.04, Debian 12): Clatch adds a GNOME custom shortcut (*Settings ›
+  Keyboard › Custom Shortcuts*). GNOME only reports the key press, so the switcher opens the
+  highlighted profile a moment after your last press.
+- **Other desktops**: add a shortcut in the desktop's keyboard settings that runs `clatch --switcher`.
 
 ### One at a time or side by side
 
@@ -183,8 +219,13 @@ Side-by-side options:
 - **Reopen profiles after Claude updates.** When Claude updates itself it closes; Clatch reopens the
   profiles that were open, on the new version.
 - **Own taskbar button for each profile** (Windows): each profile's Claude gets its own taskbar
-  group with its badged icon. macOS has no per-window Dock icons; keep the profile launchers in the
-  Dock instead.
+  group with its badged icon. macOS has no per-window Dock icons, and on Linux every Claude window
+  belongs to the same app; keep the profile launchers in the Dock or dash instead.
+
+On Linux, **Cowork works for one profile at a time** side by side: Claude's Cowork virtual machine
+helper is shared by every Claude of your user account. Chat and Code work in every profile. On Linux
+the sign-in routing uses the desktop's default app for `claude://` links (`~/.config/mimeapps.list`);
+Claude takes it back each time it starts, and Clatch quietly takes it again.
 
 ### Profile shortcuts
 
@@ -196,7 +237,8 @@ shortcut, removing it removes it, and turning the setting off removes them all.
 
 On macOS the launchers are tiny apps in `~/Applications/Clatch Profiles`; drag them to the Dock or
 open them from Spotlight. On Windows the shortcuts are on the Desktop and in the Start menu
-(*Clatch Profiles* folder), and can be pinned to the taskbar.
+(*Clatch Profiles* folder), and can be pinned to the taskbar. On Linux they're in your app grid or
+menu (search for "Claude –") and on the Desktop if you have one, and can be added to the dash.
 
 ### Editing a profile
 
@@ -241,9 +283,9 @@ Claude starts signed out, or the switch has no effect. If you see this warning, 
 | **Open Clatch at login** | Start Clatch when you log in. macOS 13 and later (on older versions add it in *System Preferences › Users & Groups › Login Items*); always available on Windows. |
 | **Restore Sign-ins…** | Puts a profile's sign-in back from one of the backups made when the mode changed. |
 | **Show Accounts Folder** | Opens the folder where Clatch keeps the accounts that aren't active. |
-| **Open Log** | Clatch's log (`~/Library/Logs/Clatch/clatch.log`, `%LOCALAPPDATA%\Clatch\clatch.log`). It never contains sign-in links or credentials. |
+| **Open Log** | Clatch's log (`~/Library/Logs/Clatch/clatch.log`, `%LOCALAPPDATA%\Clatch\clatch.log`, `~/.local/state/Clatch/clatch.log`). It never contains sign-in links or credentials. |
 
-### Why ⌃⌥⌘C and Ctrl+Alt+Win+C?
+### Why ⌃⌥⌘C, Ctrl+Alt+Win+C and Ctrl+Alt+Super+C?
 
 The default shortcut has to be something nothing else uses. macOS and mainstream apps leave
 **Control-Option-Command** combinations free. The few system shortcuts with all three (⌃⌥⌘8,
@@ -252,8 +294,9 @@ shortcut is ⌥Space. C is for Claude.
 
 On Windows, **Ctrl+Alt** alone is the **AltGr** key on many keyboard layouts (AltGr+C types "ć" on
 Polish keyboards), and most **Win+letter** shortcuts are reserved by Windows. All three together,
-Ctrl+Alt+Win+C, are free. On both systems, if another app already uses the shortcut, Clatch tells
-you and you can pick another one.
+Ctrl+Alt+Win+C, are free. Linux desktops follow the same rules for **Super** (the Windows key), so
+Clatch uses the same combination there. If another app already uses the shortcut, Clatch (or your
+desktop) tells you and you can pick another one.
 
 ---
 
@@ -265,6 +308,8 @@ you and you can pick another one.
 | **"Claude's data looks different"** | Claude may have changed how it stores data. See [above](#if-claudes-data-looks-different). |
 | **"Waiting for Claude to finish" doesn't end** | A Claude background process is still running. Wait a moment. On macOS, **Switch Anyway** is safe (see [How it works](docs/HOW-IT-WORKS.md)); on Windows Clatch has to wait, because Windows can't move a folder whose files are in use. |
 | **The shortcut does nothing** | Another app may own it. Open **Settings**; Clatch shows a warning if the shortcut is taken. Pick another one. |
+| **No Clatch icon on Linux** | Your desktop has no notification area (plain GNOME): add the *AppIndicator and KStatusNotifierItem Support* extension, or open Clatch from the app grid. |
+| **The shortcut does nothing on Linux** | Open **Settings**: Clatch says how your desktop handles it. On GNOME 48+ and KDE, confirm the shortcut in the dialog your desktop shows the first time. |
 | **Claude shows the wrong account** | Make sure you only switch with Clatch, not by signing out inside Claude. If you signed out, sign in again; the account in Clatch is simply refreshed. |
 | **Anything else** | Open an [issue](https://github.com/AA-EION/Clatch/issues). |
 
@@ -309,6 +354,9 @@ On macOS:
     └── Accounts/
         └── <account id>/Claude/   ← each other account, waiting its turn
 ```
+
+On Linux the layout is the same as on macOS, in `~/.config`: Claude's folder is `~/.config/Claude`
+and Clatch's is `~/.config/Clatch`.
 
 On Windows Claude's folder is `%APPDATA%\Claude` (classic installer) or
 `%LOCALAPPDATA%\Claude-Data\claude_…` (current Microsoft Store/MSIX versions); the other profiles'
@@ -358,6 +406,22 @@ dotnet test windows/tests/Clatch.Core.Tests    # unit tests (also run on macOS a
 pwsh windows/scripts/build.ps1                 # → windows/out/Clatch-<version>-windows-setup.exe
 ```
 
+### Building for Linux
+
+You need **Swift 6.2+** for Linux and the GTK 4 and libadwaita development packages. Build on
+Ubuntu 22.04 (the oldest supported system) so the package installs on everything newer.
+
+```bash
+sudo apt install libgtk-4-dev libadwaita-1-dev libcurl4-openssl-dev dpkg-dev
+swift test                                   # unit tests (the same core as macOS)
+swift build --product clatch && .build/debug/clatch
+linux/build-deb.sh 0.1.0-dev                 # → dist/Clatch-0.1.0-dev-linux-<arch>.deb
+```
+
+`linux/tests/e2e.sh` runs the end-to-end tests against a stand-in Claude
+(`linux/tests/stand-in-claude.c`, installed as `/usr/lib/claude-desktop/claude-desktop`), under
+`xvfb-run -a dbus-run-session`.
+
 ### Layout
 
 | Path | What's there |
@@ -369,11 +433,14 @@ pwsh windows/scripts/build.ps1                 # → windows/out/Clatch-<version
 | `windows/src/Clatch.Core` | The same engine in C#: accounts, journaled switching, fail-safe. No Windows APIs; unit-tested. |
 | `windows/src/Clatch` | The Windows app: WinUI 3 flyout, notification area icon, hot key, Restart Manager, Claude detection. |
 | `windows/installer` | Inno Setup script: one per-user installer for x64 and ARM64. |
-| `.github/workflows` | CI on Apple silicon, Intel and Windows; releases (DMG + Windows installer) from `v*` tags. |
+| `Sources/ClatchLinux` | The Linux app: GTK 4 / libadwaita window and switcher, tray (StatusNotifierItem over D-Bus), shortcut (GlobalShortcuts portal), Claude's processes. |
+| `Sources/CGtk` | The C API of GTK, libadwaita and GIO, for Swift. |
+| `linux/` | The .deb (desktop entry, AppStream data), CI setup, stand-in Claude and end-to-end tests. |
+| `.github/workflows` | CI on Apple silicon, Intel, Windows (x64, ARM64) and Linux (amd64, arm64); releases (DMG, Windows installer, .deb) from `v*` tags. |
 
 ### Releasing
 
-`VERSION` holds the version for both platforms. Bump it, then push a tag. A tag with a suffix publishes a prerelease:
+`VERSION` holds the version for all three platforms. Bump it, then push a tag. A tag with a suffix publishes a prerelease:
 
 ```bash
 git tag -a v0.1.0-beta.1 -m "Clatch 0.1.0 beta 1" && git push origin v0.1.0-beta.1
