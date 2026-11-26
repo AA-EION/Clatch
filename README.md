@@ -45,7 +45,7 @@ its own sign-in and its own local data.
   (**Ctrl+Alt+Win** and **C** on Windows, **Ctrl+Alt+Super** and **C** on Linux) to move through your profiles, let go to open the
   highlighted one. You can change the shortcut.
 - **A shortcut for every profile**: launchers in `~/Applications/Clatch Profiles` on macOS, Desktop
-  and Start menu shortcuts on Windows, each with Claude's icon and the profile's own badge. Once turned on,
+  and Start menu shortcuts on Windows, app-grid and Desktop launchers on Linux, each with Claude's icon and the profile's own badge. Once turned on,
   they're created, renamed and removed together with the profiles.
 - **Per-profile options**: badge letter or emoji, colour, environment variables and extra launch
   flags for that profile's Claude.
