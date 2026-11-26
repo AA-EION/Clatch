@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Release: builds the macOS DMG and the Windows installer and publishes both.
+# Release: builds the macOS DMG, the Windows installer and the Linux packages
+# (.deb for amd64 and arm64) and publishes them together.
 #
 #   Stable:      git tag -a v1.0.0 -m "Clatch 1.0.0"               && git push origin v1.0.0
 #   Prerelease:  git tag -a v1.0.0-beta.1 -m "Clatch 1.0.0 beta 1" && git push origin v1.0.0-beta.1
@@ -130,9 +131,33 @@ jobs:
           path: windows/out/Clatch-*-windows-setup.exe
           if-no-files-found: error
 
+  linux:
+    name: Linux ${{ matrix.arch }} package
+    needs: meta
+    strategy:
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-22.04 }
+          - { arch: arm64, runner: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - name: System packages and Swift
+        run: ./linux/ci-setup.sh build >> "$GITHUB_PATH"
+      - name: Unit tests
+        run: swift test
+      - name: Package (.deb)
+        run: ./linux/build-deb.sh "${RELEASE_TAG#v}" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: dist/Clatch-*.deb
+          if-no-files-found: error
+
   publish:
     name: Publish ${{ inputs.tag || github.ref_name }}
-    needs: [meta, macos, windows]
+    needs: [meta, macos, windows, linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -146,6 +171,7 @@ jobs:
           SIGNED: ${{ needs.meta.outputs.signed }}
         run: |
           dmg="$(ls assets/Clatch-*.dmg)"; exe="$(ls assets/Clatch-*-windows-setup.exe)"
+          deb_amd64="$(ls assets/Clatch-*-linux-amd64.deb)"; deb_arm64="$(ls assets/Clatch-*-linux-arm64.deb)"
           {
             if [ "$SIGNED" != true ]; then
               echo '> [!WARNING]'
@@ -159,6 +185,10 @@ jobs:
                 -e "s/{{DMG_SHA256}}/$(sha256sum "$dmg" | awk '{print $1}')/g" \
                 -e "s/{{EXE_NAME}}/$(basename "$exe")/g" \
                 -e "s/{{EXE_SHA256}}/$(sha256sum "$exe" | awk '{print $1}')/g" \
+                -e "s/{{DEB_AMD64_NAME}}/$(basename "$deb_amd64")/g" \
+                -e "s/{{DEB_AMD64_SHA256}}/$(sha256sum "$deb_amd64" | awk '{print $1}')/g" \
+                -e "s/{{DEB_ARM64_NAME}}/$(basename "$deb_arm64")/g" \
+                -e "s/{{DEB_ARM64_SHA256}}/$(sha256sum "$deb_arm64" | awk '{print $1}')/g" \
                 -e "s/{{TAG}}/${RELEASE_TAG}/g" \
                 .github/RELEASE_TEMPLATE.md
           } > notes.md

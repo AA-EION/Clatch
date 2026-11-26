@@ -16,6 +16,15 @@ Universal (**Apple silicon + Intel**), macOS 11 Big Sur or later. Liquid Glass o
 
 **x64 and ARM64** in one installer, Windows 10 (1809) or later. Acrylic on Windows 11.
 
+### Linux
+
+1. Download **{{DEB_AMD64_NAME}}** (Intel/AMD) or **{{DEB_ARM64_NAME}}** (ARM).
+2. Install it: `sudo apt install ./Clatch-…-linux-….deb`, or open it with your software installer.
+3. Open **Clatch** from your apps. It appears in the notification area where your desktop has one
+   (KDE Plasma, Ubuntu's GNOME, Xfce, Cinnamon…); on plain GNOME, open it from the app grid or with its shortcut.
+
+For **Claude Desktop for Linux** (Anthropic's beta for Ubuntu 22.04+ and Debian 12+). GTK 4 / libadwaita.
+
 ---
 
 ## What's Changed
@@ -28,3 +37,5 @@ Universal (**Apple silicon + Intel**), macOS 11 Big Sur or later. Liquid Glass o
 
 `{{DMG_SHA256}}`  `{{DMG_NAME}}`
 `{{EXE_SHA256}}`  `{{EXE_NAME}}`
+`{{DEB_AMD64_SHA256}}`  `{{DEB_AMD64_NAME}}`
+`{{DEB_ARM64_SHA256}}`  `{{DEB_ARM64_NAME}}`

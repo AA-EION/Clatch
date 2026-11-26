@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# CI: build, test and package on real macOS runners.
+# CI: build, test and package on real macOS, Windows and Linux runners.
 #
 # GitHub's macOS runners are Apple silicon VMs, plus an Intel image
 # (macos-15-intel) used to prove the universal app really runs on x86_64
-# hardware, not just under Rosetta.
+# hardware, not just under Rosetta. Linux packages are built on Ubuntu 22.04
+# (the oldest system Claude Desktop supports) for amd64 and arm64, and
+# installed and tested again on Ubuntu 24.04.
 
 name: CI
 
@@ -265,3 +267,82 @@ jobs:
           name: dmg-window
           path: shots/*.png
           if-no-files-found: warn
+
+  # ----------------------------------------------------------------------------
+  # Linux: unit tests, the .deb, and end-to-end tests of the installed package
+  # against a stand-in Claude (one at a time, side by side, launchers, the tray
+  # menu over D-Bus, sign-in routing), on the oldest supported system.
+  # ----------------------------------------------------------------------------
+  linux:
+    name: Linux ${{ matrix.arch }} · build, test, package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-22.04 }
+          - { arch: arm64, runner: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/cache@v4
+        with:
+          path: ~/swift
+          key: swift-6.4.3-${{ matrix.runner }}
+      - name: System packages and Swift
+        run: ./linux/ci-setup.sh build >> "$GITHUB_PATH"
+      - name: Unit tests
+        run: swift test
+      - name: Package (.deb)
+        run: ./linux/build-deb.sh "$(tr -d '[:space:]' < VERSION)-ci.${{ github.run_number }}" dist
+      - name: Stand-in Claude
+        run: |
+          sudo mkdir -p /usr/lib/claude-desktop
+          sudo gcc -O2 -o /usr/lib/claude-desktop/claude-desktop linux/tests/stand-in-claude.c
+          sudo ln -sf ../lib/claude-desktop/claude-desktop /usr/bin/claude-desktop
+      - name: Install the package
+        run: sudo apt-get install -y ./dist/Clatch-*.deb
+      - name: End-to-end tests (installed package)
+        run: xvfb-run -a dbus-run-session -- ./linux/tests/e2e.sh /usr/bin/clatch
+      - name: Window screenshots
+        if: always()
+        run: xvfb-run -a -s "-screen 0 1000x900x24" dbus-run-session -- ./linux/tests/screenshots.sh /usr/bin/clatch shots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-screenshots-${{ matrix.arch }}
+          path: shots/*.png
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Clatch-linux-${{ matrix.arch }}
+          path: dist/Clatch-*.deb
+          if-no-files-found: error
+
+  linux-newer:
+    name: Linux ${{ matrix.arch }} · install on Ubuntu 24.04
+    needs: linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: Clatch-linux-${{ matrix.arch }}
+      - name: Test tools
+        run: ./linux/ci-setup.sh test
+      - name: Stand-in Claude
+        run: |
+          sudo mkdir -p /usr/lib/claude-desktop
+          sudo gcc -O2 -o /usr/lib/claude-desktop/claude-desktop linux/tests/stand-in-claude.c
+          sudo ln -sf ../lib/claude-desktop/claude-desktop /usr/bin/claude-desktop
+      - name: Install the 22.04-built package
+        run: sudo apt-get install -y ./Clatch-*.deb
+      - name: End-to-end tests (installed package)
+        run: xvfb-run -a dbus-run-session -- ./linux/tests/e2e.sh /usr/bin/clatch
