@@ -167,6 +167,17 @@ final class FolderWatch {
     }
 }
 
+/// GtkGestureClick's "pressed": (gesture, n_press, x, y, data).
+@discardableResult
+func onPressed(_ gesture: GPtr, _ action: @escaping @MainActor (Double, Double) -> Void) -> UInt {
+    typealias Fn = @MainActor (Double, Double) -> Void
+    let handler: @convention(c) (UnsafeMutableRawPointer?, Int32, Double, Double, UnsafeMutableRawPointer?) -> Void = { _, _, x, y, data in
+        let fn = unbox(data, as: Fn.self)
+        MainActor.assumeIsolated { fn(x, y) }
+    }
+    return UInt(clatch_connect(gesture, "pressed", unsafeBitCast(handler, to: GCallback.self), retained(action), releaseAction))
+}
+
 // MARK: - Timers, idle callbacks and file descriptor watches
 
 /// A GLib timeout. Exists only while something is waiting; cancel() or deinit removes it.

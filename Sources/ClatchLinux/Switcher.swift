@@ -12,7 +12,9 @@ import Foundation
 /// the highlighted profile. Esc cancels, Enter opens at once, a click works too.
 ///
 /// Wayland lets no app place its own windows, so the switcher is a
-/// transparent full-screen window with the card in the middle. When it has
+/// transparent, borderless, maximized window with the card in the middle:
+/// what shows is just the card, like on macOS and Windows, with the desktop's
+/// top bar and dock still in place. A click outside the card cancels. When it has
 /// the keyboard, releasing the modifier keys commits. When it does not (the
 /// desktop gave no activation token), the portal's "released" event or, on
 /// GNOME's custom shortcuts, a short pause after the last press commits.
@@ -30,6 +32,7 @@ final class Switcher {
     private var window: GPtr?
     private var tiles: [Tile] = []
     private var tileWidgets: [GPtr] = []
+    private var card: GPtr?
     private var selection = 0
     private var commitTimer: GTimer?
     private var focused = false
@@ -58,9 +61,27 @@ final class Switcher {
         gtk_window_set_application(window.t(), app.t())
         gtk_window_set_title(window.t(), "Clatch profile switcher")
         gtk_window_set_decorated(window.t(), 0)
-        gtk_window_set_resizable(window.t(), 0)
+        // Resizable: window managers do not maximize a fixed-size window.
+        // Nothing opaque behind the card: no window background, no decorations.
+        gtk_widget_remove_css_class(window.t(), "background")
         UI.css(window, "clatch-switcher")
-        gtk_window_set_child(window.t(), build(sideBySide: sideBySide).t())
+        let card = build(sideBySide: sideBySide)
+        self.card = card
+        gtk_window_set_child(window.t(), card.t())
+
+        // A click outside the card cancels (the tiles are buttons and take their own clicks).
+        let click = g(gtk_gesture_click_new())
+        onPressed(click) { [weak self] x, y in
+            guard let self, let window = self.window, let card = self.card else { return }
+            var bounds = graphene_rect_t()
+            if gtk_widget_compute_bounds(card.t(), window.t(), &bounds) != 0,
+               x >= Double(bounds.origin.x), y >= Double(bounds.origin.y),
+               x <= Double(bounds.origin.x + bounds.size.width), y <= Double(bounds.origin.y + bounds.size.height) {
+                return
+            }
+            self.dismiss()
+        }
+        gtk_widget_add_controller(window.t(), click.t())
 
         let keys = g(gtk_event_controller_key_new())
         onKey(keys, released: false) { [weak self] keyval, state in self?.keyPressed(keyval, state) ?? false }
@@ -76,7 +97,14 @@ final class Switcher {
         onSignalBool(window, "close-request") { [weak self] in self?.dismiss(); return true }
 
         if let token { gtk_window_set_startup_id(window.t(), token) }
-        gtk_window_fullscreen(window.t())
+        // Transparent and maximized only where the desktop composites windows (GNOME, KDE and
+        // most others). Without a compositor transparency shows black, so the switcher is just
+        // the card, wherever the window manager puts it.
+        if gdk_display_is_composited(gtk_widget_get_display(window.t())) != 0 {
+            gtk_window_maximize(window.t())
+        } else {
+            gtk_window_set_resizable(window.t(), 0)
+        }
         gtk_window_present(window.t())
         select(selection)
         armCommitTimer()
@@ -116,6 +144,7 @@ final class Switcher {
             gtk_window_destroy(window.t())
         }
         tileWidgets = []
+        card = nil
     }
 
     // MARK: - Content

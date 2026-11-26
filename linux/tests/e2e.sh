@@ -62,15 +62,18 @@ wait_for "Claude to reopen for Bob" lock_pid "$C"
 grep -q "marking readyForQuit" "$HOME/.config/Clatch/Accounts"/*/Claude/logs/main.log || fail "Claude was not asked politely"
 echo "ok 1a: add account closed Claude politely, parked alice, reopened Claude"
 
-# The tray menu, read the way a desktop's tray reads it.
+# The tray icon, used the way a desktop's tray uses it: it offers no menu of its own
+# (so desktops don't show a generic one), and a click opens Clatch's window.
 bus=$(gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
       --method org.freedesktop.DBus.ListNames | grep -o "org.kde.StatusNotifierItem-[0-9]*-1" | head -1)
 [ -n "$bus" ] || fail "no StatusNotifierItem on the bus"
-layout=$(gdbus call --session --dest "$bus" --object-path /MenuBar --method com.canonical.dbusmenu.GetLayout -- 0 -1 "[]")
-for label in "Account 1" "Bob" "Open Clatch" "Quit Clatch"; do
-    grep -q "'$label'" <<<"$layout" || fail "tray menu lacks '$label'"
-done
-echo "ok 1b: tray menu lists the profiles and actions"
+menu=$(gdbus call --session --dest "$bus" --object-path /StatusNotifierItem \
+       --method org.freedesktop.DBus.Properties.Get org.kde.StatusNotifierItem Menu)
+grep -q "/NO_DBUSMENU" <<<"$menu" || fail "the tray item should offer no D-Bus menu, got $menu"
+shown=$(grep -c "Window shown" "$HOME/.local/state/Clatch/clatch.log" || true)
+gdbus call --session --dest "$bus" --object-path /StatusNotifierItem --method org.kde.StatusNotifierItem.Activate -- 0 0 >/dev/null
+wait_for "a click on the tray icon to open Clatch" bash -c "[ \$(grep -c 'Window shown' '$HOME/.local/state/Clatch/clatch.log') -gt $shown ]"
+echo "ok 1b: a click on the tray icon opens Clatch's window (no generic menu)"
 
 printf bob > "$C/Cookies"
 second=$(lock_pid "$C")

@@ -95,9 +95,13 @@ internal sealed class FlyoutWindow : Window
     public void ShowNearAnchor()
     {
         PlaceWindow();
-        AppWindow.Show(true);
-        Activate();
-        Native.SetForegroundWindow(WinRT.Interop.WindowNative.GetWindowHandle(this));
+        // Shown cloaked and revealed once drawn, so the Acrylic never flashes opaque.
+        Interop.Reveal.WhenDrawn(this, () =>
+        {
+            AppWindow.Show(true);
+            Activate();
+            Native.SetForegroundWindow(WinRT.Interop.WindowNative.GetWindowHandle(this));
+        });
     }
 
     // ---- Layout -----------------------------------------------------------------

@@ -241,13 +241,16 @@ to Linux:
   GNOME shortcut) hands its arguments to the running one over D-Bus and exits.
 - **Main loop.** GLib's loop also runs Swift's main queue, through libdispatch's run-loop hooks (an
   eventfd), so `@MainActor` code works without polling.
-- **Tray.** A StatusNotifierItem with a dbusmenu menu, implemented over GDBus (libappindicator is
-  GTK 3 only). KDE, Ubuntu's GNOME, Xfce, Cinnamon, MATE and others show it.
+- **Tray.** A StatusNotifierItem implemented over GDBus (libappindicator is GTK 3 only). KDE,
+  Ubuntu's GNOME, Xfce, Cinnamon, MATE and others show it. Like the menu bar icon on macOS, a click
+  opens Clatch's own window: the item offers no D-Bus menu, which desktops would otherwise show as
+  a generic menu instead.
 - **Shortcut.** The GlobalShortcuts portal (GNOME 48+, KDE 5.27+), which reports both press and
   release; on older GNOME a custom keyboard shortcut (written through GSettings) that runs
   `clatch --switcher`.
-- **Switcher.** Wayland lets no app place its own windows, so the switcher is a transparent
-  full-screen window with the card in the middle. With the keyboard, releasing the modifiers commits;
+- **Switcher.** Wayland lets no app place its own windows, so the switcher is a transparent,
+  borderless, maximized window with the card in the middle (only the card shows; the top bar and dock
+  stay). Without a compositor, where transparency would show black, it is just the card. With the keyboard, releasing the modifiers commits;
   without it, the portal's release event or a short pause does.
 - **Launchers.** `.desktop` files (`clatch --launch <id>`) in `~/.local/share/applications` and on the
   Desktop (marked trusted for GNOME), with icons drawn with cairo and pango.

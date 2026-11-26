@@ -82,8 +82,8 @@ internal sealed partial class SwitcherWindow : Window
         Closed += (_, _) => Finish();
     }
 
-    /// <summary>Shown without taking the keyboard focus: the keys stay with the shortcut.</summary>
-    public void ShowWithoutActivating() => AppWindow.Show(false);
+    /// <summary>Shown without taking the focus, and revealed once drawn so the Acrylic never flashes opaque.</summary>
+    public void ShowWithoutActivating() => Interop.Reveal.WhenDrawn(this, () => AppWindow.Show(false));
 
     // ---- Content ---------------------------------------------------------------------
 

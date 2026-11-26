@@ -64,8 +64,7 @@ final class Application {
         model.requestPanel = { [weak self] in self?.panel.present(token: self?.model.activationToken) }
         model.observe { [weak self] in self?.modelChanged() }
         model.start()
-        tray.onActivate = { [weak self] in self?.panel.present() }
-        tray.menu = { [weak self] in self?.menu() ?? [] }
+        tray.onActivate = { [weak self] in self?.panel.toggle() }
         tray.start()
         started = true
     }
@@ -76,46 +75,6 @@ final class Application {
         else if let active = model.state.active { text = "Clatch: \(active.name)" }
         else { text = "Clatch" }
         tray.setTooltip(text)
-        tray.menuChanged()
-    }
-
-    /// The tray menu: profiles first, then the actions, Donate last.
-    private func menu() -> [Tray.Item] {
-        var items: [Tray.Item] = model.state.accounts.map { account in
-            let id = account.id
-            let current = model.sideBySide ? model.isRunning(id) : id == model.state.activeID
-            return Tray.Item(label: account.name, checked: current, enabled: !model.isBusy) { [weak self] in self?.model.open(id) }
-        }
-        if model.isBusy {
-            items.append(.separator)
-            items.append(Tray.Item(label: "Switching… (open Clatch)") { [weak self] in self?.panel.present() })
-            items.append(Tray.Item(label: "Cancel Switch") { [weak self] in self?.model.cancelSwitch() })
-        }
-        if model.sideBySide && !model.isBusy {
-            let open = model.state.accounts.filter { model.isRunning($0.id) }
-            if !open.isEmpty { items.append(.separator) }
-            for account in open {
-                let id = account.id
-                items.append(Tray.Item(label: "Close \(account.name)") { [weak self] in self?.model.close(id) })
-            }
-        }
-        items.append(.separator)
-        items.append(Tray.Item(label: "Open Clatch") { [weak self] in self?.panel.present() })
-        items.append(Tray.Item(label: "Add Account…", enabled: !model.isBusy) { [weak self] in
-            self?.model.show(.addAccount)
-            self?.panel.present()
-        })
-        items.append(Tray.Item(label: "Settings…") { [weak self] in
-            self?.model.show(.settings)
-            self?.panel.present()
-        })
-        items.append(.separator)
-        items.append(Tray.Item(label: "Quit Clatch") { [weak self] in
-            Log.write("Quit")
-            self.map { g_application_quit($0.app.t()) }
-        })
-        items.append(Tray.Item(label: "Donate ♥") { [weak self] in self?.model.openURI(AppModel.donateURL) })
-        return items
     }
 
     // MARK: - Command line (this process's, or another clatch's handed over)

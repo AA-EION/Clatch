@@ -75,6 +75,11 @@ final class Panel {
         Log.write("Window shown")
     }
 
+    /// A click on the tray icon: opens the window, or closes it when it is in front already.
+    func toggle() {
+        if let window, gtk_window_is_active(window.t()) != 0 { close() } else { present(token: model.activationToken) }
+    }
+
     func close() {
         guard let window else { return }
         gtk_window_close(window.t())
