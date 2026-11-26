@@ -46,6 +46,14 @@ public enum ProcessScanner {
         return path
     }
 
+    /// Is the process running? A zombie (exited, not yet reaped) is not.
+    public static func isAlive(_ pid: pid_t) -> Bool {
+        guard pid > 0, let stat = try? String(contentsOfFile: "/proc/\(pid)/stat", encoding: .utf8),
+              let close = stat.lastIndex(of: ")") else { return false }
+        let state = stat[stat.index(after: close)...].split(separator: " ").first
+        return state != "Z" && state != "X"
+    }
+
     /// The parent process id (field 4 of /proc/<pid>/stat).
     public static func parent(of pid: pid_t) -> pid_t? {
         guard let stat = try? String(contentsOfFile: "/proc/\(pid)/stat", encoding: .utf8),

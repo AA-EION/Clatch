@@ -15,11 +15,7 @@ import Foundation
 /// file manager can restore it. Used on Linux; macOS uses `trashItem`.
 public enum Trash {
     public static var home: URL {
-        if let value = ProcessInfo.processInfo.environment["XDG_DATA_HOME"], value.hasPrefix("/") {
-            return URL(fileURLWithPath: value, isDirectory: true).appendingPathComponent("Trash", isDirectory: true)
-        }
-        return URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-            .appendingPathComponent(".local/share/Trash", isDirectory: true)
+        ClatchPaths.xdg("XDG_DATA_HOME", ".local/share").appendingPathComponent("Trash", isDirectory: true)
     }
 
     /// Returns where the item now is.

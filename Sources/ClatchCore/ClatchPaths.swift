@@ -28,6 +28,23 @@ public struct ClatchPaths: Sendable, Equatable {
         self.clatchRoot = clatchRoot
     }
 
+    /// `$HOME`. On Linux, Foundation's NSHomeDirectory() reads the password
+    /// database instead; the XDG rules (and Claude itself) go by `$HOME`.
+    public static var home: URL {
+        if let value = ProcessInfo.processInfo.environment["HOME"], value.hasPrefix("/") {
+            return URL(fileURLWithPath: value, isDirectory: true)
+        }
+        return URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+    }
+
+    /// An XDG base directory: the variable when it is an absolute path, else `$HOME/<fallback>`.
+    public static func xdg(_ variable: String, _ fallback: String) -> URL {
+        if let value = ProcessInfo.processInfo.environment[variable], value.hasPrefix("/") {
+            return URL(fileURLWithPath: value, isDirectory: true)
+        }
+        return home.appendingPathComponent(fallback, isDirectory: true)
+    }
+
     #if os(Linux)
     /// Linux: Claude keeps `$XDG_CONFIG_HOME/Claude` (normally `~/.config/Claude`).
     /// Clatch's folder sits next to it, so a switch is always a rename on one disk.
@@ -41,12 +58,8 @@ public struct ClatchPaths: Sendable, Equatable {
     }
 
     /// `$XDG_CONFIG_HOME`, or `~/.config` when it is unset or not absolute (the XDG rule).
-    public static var configHome: URL {
-        if let value = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"], value.hasPrefix("/") {
-            return URL(fileURLWithPath: value, isDirectory: true)
-        }
-        return URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).appendingPathComponent(".config", isDirectory: true)
-    }
+    public static var configHome: URL { xdg("XDG_CONFIG_HOME", ".config") }
+
     #else
     /// The real locations in the user's Library.
     public static var standard: ClatchPaths {
