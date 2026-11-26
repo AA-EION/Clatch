@@ -1,0 +1,18 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Clatch
+Source: https://github.com/AA-EION/Clatch
+
+Files: *
+Copyright: 2026 Issen Software Group
+License: GPL-3.0-or-later
+ This program is free software: you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the Free
+ Software Foundation, either version 3 of the License, or (at your option)
+ any later version.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ version 3 can be found in "/usr/share/common-licenses/GPL-3".
+ .
+ The Swift runtime and Foundation linked into the program are Copyright
+ Apple Inc. and the Swift project authors, under the Apache License 2.0 with
+ Runtime Library Exception (https://swift.org/LICENSE.txt).

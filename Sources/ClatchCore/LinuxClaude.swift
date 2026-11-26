@@ -119,6 +119,24 @@ public enum LinuxClaude {
         return nil
     }
 
+    // MARK: - Default applications (mimeapps.list)
+
+    /// The user's default handler for a MIME type, from the text of their
+    /// `~/.config/mimeapps.list` (the first entry under [Default Applications]).
+    public static func defaultHandler(for mimeType: String, inMimeapps text: String) -> String? {
+        var inDefaults = false
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("[") { inDefaults = line == "[Default Applications]"; continue }
+            guard inDefaults, let equals = line.firstIndex(of: "="),
+                  line[..<equals].trimmingCharacters(in: .whitespaces) == mimeType else { continue }
+            let first = line[line.index(after: equals)...].split(separator: ";").first
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            return first?.isEmpty == false ? first : nil
+        }
+        return nil
+    }
+
     // MARK: - Desktop entries
 
     /// Escapes a value for a .desktop file (spec: \s \n \t \r \\).

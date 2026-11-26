@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<component type="desktop-application">
+  <id>com.issensoftware.Clatch</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Clatch</name>
+  <summary>Switch Claude Desktop accounts without signing out</summary>
+  <developer id="com.issensoftware"><name>Issen Software Group</name></developer>
+  <description>
+    <p>Clatch keeps each of your Claude Desktop accounts signed in and switches between them for you,
+    from the notification area or with a keyboard shortcut.</p>
+    <ul>
+      <li>One at a time: one Claude, and Clatch swaps the account.</li>
+      <li>Side by side: each account gets its own Claude window.</li>
+      <li>An Alt+Tab-style profile switcher and a launcher for every profile.</li>
+    </ul>
+    <p>Clatch never reads, stores or sends your credentials: it only moves Claude's own data folders on your computer.</p>
+  </description>
+  <launchable type="desktop-id">com.issensoftware.Clatch.desktop</launchable>
+  <url type="homepage">https://github.com/AA-EION/Clatch</url>
+  <url type="bugtracker">https://github.com/AA-EION/Clatch/issues</url>
+  <content_rating type="oars-1.1"/>
+</component>

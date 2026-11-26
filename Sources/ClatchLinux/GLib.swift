@@ -125,14 +125,19 @@ func onKey(_ controller: GPtr, released: Bool,
                                callback, retained(action), releaseAction))
 }
 
-/// GFileMonitor's "changed": (monitor, file, other_file, event, data). Reports the changed file's name.
+/// GFileMonitor's "changed": (monitor, file, other_file, event, data). Reports the names involved:
+/// for a rename (how most programs save: a temporary file renamed over the real one) both the
+/// old and the new name, so a watcher sees "mimeapps.list" whichever way it was written.
 @discardableResult
 func onFileChanged(_ monitor: GPtr, _ action: @escaping @MainActor (String?) -> Void) -> UInt {
     typealias Fn = @MainActor (String?) -> Void
-    let handler: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, Int32, UnsafeMutableRawPointer?) -> Void = { _, file, _, _, data in
+    let handler: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, Int32, UnsafeMutableRawPointer?) -> Void = { _, file, other, _, data in
         let fn = unbox(data, as: Fn.self)
-        let name = file.flatMap { String(owned: g_file_get_basename($0.t())) }
-        MainActor.assumeIsolated { fn(name) }
+        let names = [file, other].compactMap { $0.flatMap { String(owned: g_file_get_basename($0.t())) } }
+        MainActor.assumeIsolated {
+            if names.isEmpty { fn(nil) }
+            for name in Set(names) { fn(name) }
+        }
     }
     return UInt(clatch_connect(monitor, "changed", unsafeBitCast(handler, to: GCallback.self), retained(action), releaseAction))
 }

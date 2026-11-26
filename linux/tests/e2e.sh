@@ -30,10 +30,10 @@ gone() { ! pgrep -f "$1" >/dev/null; }
 new_home() {
     # The previous part's Clatch and Claudes must be gone: Clatch is single-instance
     # per D-Bus session, so a leftover would receive this part's commands.
-    pkill -f "$CLATCH" 2>/dev/null || true
+    pkill -f "^$CLATCH" 2>/dev/null || true
     pkill -f "^$CLAUDE" 2>/dev/null || true
-    for _ in $(seq 1 40); do gone "$CLATCH" && gone "^$CLAUDE" && break; sleep 0.25; done
-    gone "$CLATCH" || pkill -KILL -f "$CLATCH" || true
+    for _ in $(seq 1 40); do gone "^$CLATCH" && gone "^$CLAUDE" && break; sleep 0.25; done
+    gone "^$CLATCH" || pkill -KILL -f "^$CLATCH" || true
     sleep 0.5
     export HOME="$WORK/$1"
     export XDG_RUNTIME_DIR="$WORK/$1-run"
@@ -130,5 +130,50 @@ grep -qa -- "--user-data-dir" "/proc/$own/cmdline" && fail "the active profile m
 echo "ok 2c: the first profile started again on Claude's own folder"
 
 "$CLATCH" --quit; sleep 0.5
+
+# ---- 3. Sign-in routing (needs Clatch's desktop entry: the installed package) ----------
+if [ -f /usr/share/applications/com.issensoftware.Clatch.desktop ]; then
+    new_home routing
+    C="$HOME/.config/Claude"
+    # Claude's own desktop entry (the stand-in has none of its own), as the real package installs it.
+    mkdir -p "$HOME/.local/share/applications"
+    printf '[Desktop Entry]\nType=Application\nName=Claude\nExec=%s %%U\nMimeType=x-scheme-handler/claude;\n' "$CLAUDE" \
+        > "$HOME/.local/share/applications/com.anthropic.Claude.desktop"
+    gio mime x-scheme-handler/claude com.anthropic.Claude.desktop >/dev/null
+    mkdir -p "$HOME/.config/Clatch"
+    echo '{"sideBySide": true, "routeSignIns": true}' > "$HOME/.config/Clatch/settings.json"
+    start_claude
+    wait_for "the stand-in Claude" lock_pid "$C"
+    handler() { gio mime x-scheme-handler/claude | head -1 | grep -q "$1"; }
+    start_clatch --background
+    wait_for "Clatch to take claude:// links" handler com.issensoftware.Clatch.desktop
+    echo "ok 3a: with routing on, Clatch handles claude:// links"
+
+    # Claude makes itself the handler again whenever it starts; Clatch takes it back.
+    gio mime x-scheme-handler/claude com.anthropic.Claude.desktop >/dev/null
+    wait_for "Clatch to take the handler back" handler com.issensoftware.Clatch.desktop
+    echo "ok 3b: Clatch takes the handler back after Claude re-registers"
+
+    "$CLATCH" --add-account Bob
+    bob=$(python3 -c "import json; d=json.load(open('$HOME/.config/Clatch/accounts.json')); print([a['id'] for a in d['accounts'] if a['name']=='Bob'][0])")
+    bobdir="$HOME/.config/Clatch/Accounts/$bob/Claude"
+    wait_for "Bob's Claude" lock_pid "$bobdir"
+    "$CLATCH" "claude://claude.ai/login/callback?code=test-code"
+    wait_for "the sign-in to reach Bob" grep -q "claude://claude.ai/login/callback" "$bobdir/handoff.log"
+    [ ! -s "$C/handoff.log" ] || fail "the sign-in went to the wrong profile"
+    grep -q "test-code" "$HOME/.local/state/Clatch/clatch.log" && fail "a sign-in code was written to the log"
+    echo "ok 3c: a sign-in reaches the profile that is waiting for one (and is not logged)"
+
+    "$CLATCH" --quit; sleep 0.5
+    # Off again (as Settings does): Claude gets its handler back at the next start.
+    echo '{"sideBySide": true, "routeSignIns": false}' > "$HOME/.config/Clatch/settings.json"
+    start_clatch --background
+    wait_for "Claude to get claude:// links back" handler com.anthropic.Claude.desktop
+    echo "ok 3d: with routing off, claude:// links go to Claude again"
+    "$CLATCH" --quit; sleep 0.5
+else
+    echo "skip 3: sign-in routing needs the installed package (its desktop entry)"
+fi
+
 pkill -f "^$CLAUDE" || true
 echo "all Linux end-to-end tests passed"

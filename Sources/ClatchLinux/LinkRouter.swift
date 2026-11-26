@@ -46,7 +46,14 @@ final class LinkRouter {
     // MARK: - The handler
 
     /// The desktop entry that handles claude:// links now (e.g. com.anthropic.Claude.desktop).
+    /// Read from the user's mimeapps.list itself, where Claude (xdg-mime) and Clatch
+    /// write it: GIO's own answer comes from a cache that can lag behind a change.
     static var currentHandler: String? {
+        let file = ClatchPaths.configHome.appendingPathComponent("mimeapps.list")
+        if let text = try? String(contentsOf: file, encoding: .utf8),
+           let handler = LinuxClaude.defaultHandler(for: mimeType, inMimeapps: text) {
+            return handler
+        }
         guard let info = g_app_info_get_default_for_type(mimeType, 0) else { return nil }
         defer { g_object_unref(GPtr(info)) }
         return String(gstring: g_app_info_get_id(info))
@@ -55,9 +62,11 @@ final class LinkRouter {
     static var clatchIsHandler: Bool { currentHandler == Desktop.desktopEntry }
 
     /// Makes the desktop entry with this id the default for claude:// links.
+    /// Looks the entry up among all installed apps (not only those the MIME
+    /// cache lists for claude://, which may be stale right after an install).
     @discardableResult
     static func setHandler(_ desktopID: String) -> Bool {
-        guard let list = g_app_info_get_all_for_type(mimeType) else { return false }
+        guard let list = g_app_info_get_all() else { return false }
         defer { g_list_free_full(list) { g_object_unref($0) } }
         var node: UnsafeMutablePointer<GList>? = list
         while let current = node {
@@ -71,19 +80,19 @@ final class LinkRouter {
             }
             node = current.pointee.next
         }
-        Log.write("No desktop entry \(desktopID) offers claude:// links")
+        Log.write("No installed desktop entry \(desktopID)")
         return false
     }
 
     /// Routing on: Clatch becomes the handler, and stays it while Claude takes it back.
     func enable() {
         if let current = Self.currentHandler, current != Desktop.desktopEntry { onDisplacedHandler?(current) }
-        Self.setHandler(Desktop.desktopEntry)
+        let ok = Self.setHandler(Desktop.desktopEntry)
         watch = FolderWatch(ClatchPaths.configHome) { [weak self] name in
             guard name == "mimeapps.list" else { return }
             self?.handlerMayHaveChanged()
         }
-        Log.write("claude:// links now go to Clatch (routing on)")
+        Log.write(ok ? "claude:// links now go to Clatch (routing on)" : "Routing on, but Clatch could not take claude:// links")
     }
 
     /// Routing off: Claude's handler comes back.

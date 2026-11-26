@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Name=Clatch
+GenericName=Claude Account Switcher
+Comment=Switch Claude Desktop accounts without signing out
+Exec=clatch %U
+Icon=com.issensoftware.Clatch
+Terminal=false
+Categories=Utility;
+Keywords=Claude;Account;Profile;Switch;Switcher;
+MimeType=x-scheme-handler/claude;
+StartupNotify=true
+SingleMainWindow=true
+Actions=Settings;
+
+[Desktop Action Settings]
+Name=Settings
+Exec=clatch --settings

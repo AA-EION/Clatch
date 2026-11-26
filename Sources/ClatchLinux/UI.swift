@@ -314,7 +314,7 @@ enum UI {
         .clatch-running { color: @success_color; }
         .clatch-swatch { min-width: 22px; min-height: 22px; padding: 0; border-radius: 999px; }
         .clatch-swatch.selected { box-shadow: 0 0 0 2px @window_bg_color, 0 0 0 4px @window_fg_color; }
-        window.clatch-switcher, window.clatch-switcher > * { background: transparent; box-shadow: none; }
+        window.clatch-switcher { background: transparent; box-shadow: none; }
         .clatch-switcher-surface {
             background-color: alpha(@window_bg_color, 0.82);
             border-radius: 28px;

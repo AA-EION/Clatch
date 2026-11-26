@@ -68,6 +68,19 @@ final class LinuxHelperTests: XCTestCase {
         XCTAssertNil(LinuxClaude.packageVersion("removed-thing", inDpkgStatus: status))
     }
 
+    func testReadsTheDefaultLinkHandler() {
+        let text = """
+        [Added Associations]
+        x-scheme-handler/claude=com.anthropic.Claude.desktop;com.issensoftware.Clatch.desktop;
+
+        [Default Applications]
+        text/html=firefox.desktop
+        x-scheme-handler/claude = com.issensoftware.Clatch.desktop;com.anthropic.Claude.desktop;
+        """
+        XCTAssertEqual(LinuxClaude.defaultHandler(for: "x-scheme-handler/claude", inMimeapps: text), "com.issensoftware.Clatch.desktop")
+        XCTAssertNil(LinuxClaude.defaultHandler(for: "x-scheme-handler/claude", inMimeapps: "[Added Associations]\nx-scheme-handler/claude=a.desktop\n"))
+    }
+
     func testDesktopEntryQuoting() {
         XCTAssertEqual(LinuxClaude.execArgument("/usr/bin/clatch"), "/usr/bin/clatch")
         XCTAssertEqual(LinuxClaude.execArgument("/opt/my apps/clatch"), "\"/opt/my apps/clatch\"")
