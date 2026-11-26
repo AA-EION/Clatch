@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Issen Software Group
 
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
 /// Finds processes whose executable lives under given folders.
@@ -11,9 +15,45 @@ import Foundation
 /// run binaries stored in Claude's data folder. They usually exit together with
 /// the app, but Clatch waits until none is left before it touches any file.
 ///
-/// Uses `proc_listallpids`/`proc_pidpath`, which work for the user's own
-/// processes without any special permission.
+/// macOS: `proc_listallpids`/`proc_pidpath`; Linux: `/proc/<pid>/exe`. Both
+/// work for the user's own processes without any special permission.
 public enum ProcessScanner {
+    #if os(Linux)
+    public static func pids(withExecutableUnder folders: [URL]) -> [pid_t] {
+        let prefixes = folders.map { $0.standardizedFileURL.resolvingSymlinksInPath().path + "/" }
+        guard !prefixes.isEmpty else { return [] }
+        let me = getpid()
+        return allPids().filter { pid in
+            guard pid != me, let path = executable(of: pid) else { return false }
+            return prefixes.contains(where: { path.hasPrefix($0) })
+        }
+    }
+
+    /// Every process id in /proc.
+    public static func allPids() -> [pid_t] {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: "/proc") else { return [] }
+        return names.compactMap { pid_t($0) }.filter { $0 > 0 }
+    }
+
+    /// The process's executable (readlink /proc/<pid>/exe); nil if it is gone or not ours.
+    public static func executable(of pid: pid_t) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4096)
+        let length = readlink("/proc/\(pid)/exe", &buffer, buffer.count - 1)
+        guard length > 0 else { return nil }
+        var path = String(decoding: buffer.prefix(length).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        // A replaced binary (after an update) reads "… (deleted)".
+        if path.hasSuffix(" (deleted)") { path.removeLast(" (deleted)".count) }
+        return path
+    }
+
+    /// The parent process id (field 4 of /proc/<pid>/stat).
+    public static func parent(of pid: pid_t) -> pid_t? {
+        guard let stat = try? String(contentsOfFile: "/proc/\(pid)/stat", encoding: .utf8),
+              let close = stat.lastIndex(of: ")") else { return nil }
+        let fields = stat[stat.index(after: close)...].split(separator: " ")
+        return fields.count > 1 ? pid_t(fields[1]) : nil
+    }
+    #else
     public static func pids(withExecutableUnder folders: [URL]) -> [pid_t] {
         let prefixes = folders.map { $0.standardizedFileURL.resolvingSymlinksInPath().path + "/" }
         guard !prefixes.isEmpty else { return [] }
@@ -43,4 +83,5 @@ public enum ProcessScanner {
         }
         return matches
     }
+    #endif
 }

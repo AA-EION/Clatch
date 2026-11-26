@@ -28,6 +28,26 @@ public struct ClatchPaths: Sendable, Equatable {
         self.clatchRoot = clatchRoot
     }
 
+    #if os(Linux)
+    /// Linux: Claude keeps `$XDG_CONFIG_HOME/Claude` (normally `~/.config/Claude`).
+    /// Clatch's folder sits next to it, so a switch is always a rename on one disk.
+    /// The safeStorage key is in the Secret Service keyring (GNOME Keyring or
+    /// KWallet) under the application name "Claude": shared by every folder,
+    /// as on macOS.
+    public static var standard: ClatchPaths {
+        let config = configHome
+        return ClatchPaths(claudeData: config.appendingPathComponent("Claude", isDirectory: true),
+                           clatchRoot: config.appendingPathComponent("Clatch", isDirectory: true))
+    }
+
+    /// `$XDG_CONFIG_HOME`, or `~/.config` when it is unset or not absolute (the XDG rule).
+    public static var configHome: URL {
+        if let value = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"], value.hasPrefix("/") {
+            return URL(fileURLWithPath: value, isDirectory: true)
+        }
+        return URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).appendingPathComponent(".config", isDirectory: true)
+    }
+    #else
     /// The real locations in the user's Library.
     public static var standard: ClatchPaths {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -35,6 +55,7 @@ public struct ClatchPaths: Sendable, Equatable {
         return ClatchPaths(claudeData: support.appendingPathComponent("Claude", isDirectory: true),
                            clatchRoot: support.appendingPathComponent("Clatch", isDirectory: true))
     }
+    #endif
 
     public var stateFile: URL { clatchRoot.appendingPathComponent("accounts.json") }
     public var journalFile: URL { clatchRoot.appendingPathComponent("switch-journal.json") }

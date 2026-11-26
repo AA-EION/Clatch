@@ -12,6 +12,26 @@
 // merges them into one universal binary.
 import PackageDescription
 
+#if os(Linux)
+// Linux: the same core, with a GTK 4 / libadwaita app (Sources/ClatchLinux).
+// GTK and libadwaita are used through their C API (Sources/CGtk); the oldest
+// versions supported are those of Ubuntu 22.04 (GTK 4.6, libadwaita 1.1),
+// the oldest system Claude Desktop supports. scripts/build-deb.sh links the
+// Swift runtime statically, so the package needs only system libraries.
+let package = Package(
+    name: "Clatch",
+    products: [
+        .executable(name: "clatch", targets: ["ClatchLinux"]),
+    ],
+    targets: [
+        .target(name: "ClatchCore"),
+        .systemLibrary(name: "CGtk", pkgConfig: "libadwaita-1",
+                       providers: [.apt(["libadwaita-1-dev", "libgtk-4-dev"])]),
+        .executableTarget(name: "ClatchLinux", dependencies: ["ClatchCore", "CGtk"]),
+        .testTarget(name: "ClatchCoreTests", dependencies: ["ClatchCore"]),
+    ],
+    swiftLanguageModes: [.v6])
+#else
 let package = Package(
     name: "Clatch",
     platforms: [.macOS(.v11)],
@@ -32,3 +52,4 @@ let package = Package(
         .testTarget(name: "ClatchCoreTests", dependencies: ["ClatchCore"]),
     ],
     swiftLanguageModes: [.v6])
+#endif

@@ -1,13 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Issen Software Group
 
+#if canImport(Darwin)
 import Darwin
+#else
+import Glibc
+#endif
 import Foundation
 
 /// The command-line arguments another process of the same user was started
-/// with (sysctl KERN_PROCARGS2: no special permission needed). Side by side,
-/// this is how Clatch tells which profile each running Claude belongs to.
+/// with (macOS: sysctl KERN_PROCARGS2; Linux: /proc/<pid>/cmdline; no special
+/// permission needed). Side by side, this is how Clatch tells which profile
+/// each running Claude belongs to.
 public enum ProcessArguments {
+    #if os(Linux)
+    public static func of(_ pid: pid_t) -> [String]? {
+        guard let data = FileManager.default.contents(atPath: "/proc/\(pid)/cmdline"), !data.isEmpty else { return nil }
+        var parts = data.split(separator: 0, omittingEmptySubsequences: false).map { String(decoding: $0, as: UTF8.self) }
+        if parts.last == "" { parts.removeLast() }
+        return parts
+    }
+    #else
     public static func of(_ pid: pid_t) -> [String]? {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
@@ -28,15 +41,20 @@ public enum ProcessArguments {
         }
         return arguments
     }
+    #endif
 
     /// The value of --user-data-dir ("--user-data-dir=X" or "--user-data-dir X").
     public static func userDataDir(in arguments: [String]) -> String? {
+        value(of: "--user-data-dir", in: arguments)
+    }
+
+    /// The value of a switch ("--name=X" or "--name X").
+    public static func value(of name: String, in arguments: [String]) -> String? {
         for (i, argument) in arguments.enumerated() {
-            if argument.hasPrefix("--user-data-dir=") {
-                let value = String(argument.dropFirst("--user-data-dir=".count))
-                return trimmed(value)
+            if argument.hasPrefix(name + "=") {
+                return trimmed(String(argument.dropFirst(name.count + 1)))
             }
-            if argument == "--user-data-dir", i + 1 < arguments.count {
+            if argument == name, i + 1 < arguments.count {
                 return trimmed(arguments[i + 1])
             }
         }

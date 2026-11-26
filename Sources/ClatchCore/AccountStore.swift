@@ -110,6 +110,8 @@ public final class AccountStore {
         if fileManager.fileExists(atPath: folder.path) {
             #if os(macOS)
             try fileManager.trashItem(at: folder, resultingItemURL: nil)
+            #elseif os(Linux)
+            try Trash.move(folder, fileManager: fileManager)
             #else
             try fileManager.removeItem(at: folder)
             #endif
