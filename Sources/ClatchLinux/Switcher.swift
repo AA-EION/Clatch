@@ -34,6 +34,8 @@ final class Switcher {
     private var commitTimer: GTimer?
     private var focused = false
     private var shortcutKey: UInt32 = 0
+    /// A shortcut without modifiers (a function key alone): letting go of that key commits.
+    private var shortcutAlone = false
     private var reportsRelease = false
 
     var isOpen: Bool { window != nil }
@@ -49,6 +51,7 @@ final class Switcher {
         let start = tiles.firstIndex { $0.account.id == current } ?? -1
         selection = (start + 1) % tiles.count
         shortcutKey = accelerator.map(Self.keyval(of:)) ?? 0
+        shortcutAlone = accelerator.map { !$0.contains("<") } ?? false
 
         let window = g(gtk_window_new())
         self.window = window
@@ -184,6 +187,10 @@ final class Switcher {
     }
 
     private func keyReleased(_ keyval: UInt32) -> Bool {
+        if shortcutAlone && gdk_keyval_to_lower(keyval) == shortcutKey {
+            commit()
+            return true
+        }
         guard Self.modifierKeys.contains(keyval), keyval != 0xffe1, keyval != 0xffe2 else { return false }
         commit()
         return true
